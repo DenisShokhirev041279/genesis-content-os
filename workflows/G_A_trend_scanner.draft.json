@@ -1,0 +1,177 @@
+{
+  "_meta": {
+    "notes": "All credentials replaced with ${ENV_VAR} placeholders. Configure via Doppler or .env. This is the draft variant using $env (env-based) auth — no n8n credential setup needed beyond GITHUB_PAT."
+  },
+  "name": "G_A_trend_scanner",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 */6 * * *"
+            }
+          ]
+        },
+        "triggerAtStartup": false,
+        "timezone": "Europe/Berlin"
+      },
+      "id": "trigger-cron-6h",
+      "name": "Every 6h Berlin",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.github.com/search/repositories",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "q", "value": "created:>{{ $now.minus({days: 2}).toISODate() }} stars:>20 topic:llm OR topic:agent OR topic:mcp" },
+            { "name": "sort", "value": "stars" },
+            { "name": "order", "value": "desc" },
+            { "name": "per_page", "value": "25" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/vnd.github+json" },
+            { "name": "X-GitHub-Api-Version", "value": "2022-11-28" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.GITHUB_PAT }}" }
+          ]
+        },
+        "options": { "timeout": 30000 }
+      },
+      "id": "http-github-trending",
+      "name": "GitHub: trending repos 2d",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 200]
+    },
+    {
+      "parameters": {
+        "url": "https://hn.algolia.com/api/v1/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "query", "value": "AI OR LLM OR agent OR MCP OR claude OR anthropic" },
+            { "name": "tags", "value": "story" },
+            { "name": "numericFilters", "value": "points>50,created_at_i>{{ Math.floor($now.minus({hours: 24}).toSeconds()) }}" },
+            { "name": "hitsPerPage", "value": "30" }
+          ]
+        },
+        "options": { "timeout": 20000 }
+      },
+      "id": "http-hn-search",
+      "name": "HN Algolia: AI stories 24h",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// GitHub repo → trend_signal row\nconst repo = $json;\nreturn {\n  json: {\n    source: 'github',\n    source_id: String(repo.id),\n    title: repo.full_name + ' — ' + (repo.description || '(no description)').slice(0, 200),\n    url: repo.html_url,\n    score: repo.stargazers_count,\n    raw: {\n      language: repo.language,\n      topics: repo.topics || [],\n      stars: repo.stargazers_count,\n      forks: repo.forks_count,\n      owner: repo.owner?.login,\n      created_at: repo.created_at,\n      description: repo.description\n    }\n  }\n};"
+      },
+      "id": "normalize-github",
+      "name": "Normalize GitHub",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 200]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// HN story → trend_signal row\nconst hit = $json;\nreturn {\n  json: {\n    source: 'hn',\n    source_id: String(hit.objectID),\n    title: hit.title,\n    url: hit.url || ('https://news.ycombinator.com/item?id=' + hit.objectID),\n    score: hit.points,\n    raw: {\n      author: hit.author,\n      num_comments: hit.num_comments,\n      created_at: hit.created_at,\n      tags: hit._tags\n    }\n  }\n};"
+      },
+      "id": "normalize-hn",
+      "name": "Normalize HN",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {},
+      "id": "merge-sources",
+      "name": "Merge sources",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_GENESIS_URL }}/rest/v1/trend_signals",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_GENESIS_SERVICE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_GENESIS_SERVICE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "resolution=ignore-duplicates,return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "bodyContentType": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": { "timeout": 15000 }
+      },
+      "id": "supabase-upsert",
+      "name": "Supabase: upsert trend_signal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate report: how many signals were written per source\nconst items = $input.all();\nconst bySource = items.reduce((acc, it) => {\n  const s = it.json?.source || 'unknown';\n  acc[s] = (acc[s] || 0) + 1;\n  return acc;\n}, {});\nreturn [{\n  json: {\n    run_at: new Date().toISOString(),\n    total_signals: items.length,\n    by_source: bySource\n  }\n}];"
+      },
+      "id": "aggregate",
+      "name": "Aggregate run report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    }
+  ],
+  "connections": {
+    "Every 6h Berlin": {
+      "main": [
+        [
+          { "node": "GitHub: trending repos 2d", "type": "main", "index": 0 },
+          { "node": "HN Algolia: AI stories 24h", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "GitHub: trending repos 2d": {
+      "main": [[{ "node": "Normalize GitHub", "type": "main", "index": 0 }]]
+    },
+    "HN Algolia: AI stories 24h": {
+      "main": [[{ "node": "Normalize HN", "type": "main", "index": 0 }]]
+    },
+    "Normalize GitHub": {
+      "main": [[{ "node": "Merge sources", "type": "main", "index": 0 }]]
+    },
+    "Normalize HN": {
+      "main": [[{ "node": "Merge sources", "type": "main", "index": 1 }]]
+    },
+    "Merge sources": {
+      "main": [[{ "node": "Supabase: upsert trend_signal", "type": "main", "index": 0 }]]
+    },
+    "Supabase: upsert trend_signal": {
+      "main": [[{ "node": "Aggregate run report", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "timezone": "Europe/Berlin"
+  },
+  "staticData": null,
+  "meta": {
+    "notes": "GENESIS Module A v0 — trend scanner. GitHub + HN. Reddit+PH planned for Day 3. Requires: GITHUB_PAT credential + SUPABASE_GENESIS_* env vars. ON CONFLICT (source, source_id) DO NOTHING (Prefer: resolution=ignore-duplicates)."
+  }
+}

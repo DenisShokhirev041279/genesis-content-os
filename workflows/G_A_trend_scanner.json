@@ -1,0 +1,158 @@
+{
+  "_meta": {
+    "notes": "All credentials replaced with ${ENV_VAR} placeholders. Configure via Doppler or .env. Replace credential IDs with your own n8n credential IDs after import."
+  },
+  "name": "G_A_trend_scanner",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 */6 * * *"
+            }
+          ]
+        },
+        "triggerAtStartup": false,
+        "timezone": "Europe/Berlin"
+      },
+      "id": "trigger-cron-6h",
+      "name": "Every 6h Berlin",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.github.com/search/repositories?q=created:>{{ $now.minus({days: 7}).toISODate() }}+stars:>20+topic:llm&sort=stars&order=desc&per_page=25",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/vnd.github+json" },
+            { "name": "X-GitHub-Api-Version", "value": "2022-11-28" }
+          ]
+        },
+        "options": { "timeout": 30000 }
+      },
+      "id": "http-github-trending",
+      "name": "GitHub: LLM trending",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 200]
+    },
+    {
+      "parameters": {
+        "url": "=https://hn.algolia.com/api/v1/search?tags=story&numericFilters=points>50,created_at_i>{{ Math.floor($now.minus({hours: 48}).toSeconds()) }}&query=AI+OR+LLM+OR+agent+OR+MCP+OR+claude+OR+anthropic&hitsPerPage=30",
+        "options": { "timeout": 20000 }
+      },
+      "id": "http-hn-search",
+      "name": "HN Algolia: AI stories 48h",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const items = $json.items || [];\nreturn items.map(repo => ({\n  json: {\n    source: 'github',\n    source_id: String(repo.id),\n    title: (repo.full_name + ' — ' + (repo.description || '')).slice(0, 400),\n    url: repo.html_url,\n    score: repo.stargazers_count,\n    raw: {\n      language: repo.language,\n      topics: repo.topics || [],\n      stars: repo.stargazers_count,\n      forks: repo.forks_count,\n      owner: repo.owner && repo.owner.login,\n      created_at: repo.created_at\n    }\n  }\n}));"
+      },
+      "id": "normalize-github",
+      "name": "Normalize GitHub",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 200]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const hits = $json.hits || [];\nreturn hits.map(hit => ({\n  json: {\n    source: 'hn',\n    source_id: String(hit.objectID),\n    title: (hit.title || '').slice(0, 400),\n    url: hit.url || ('https://news.ycombinator.com/item?id=' + hit.objectID),\n    score: hit.points,\n    raw: {\n      author: hit.author,\n      num_comments: hit.num_comments,\n      created_at: hit.created_at,\n      tags: hit._tags\n    }\n  }\n}));"
+      },
+      "id": "normalize-hn",
+      "name": "Normalize HN",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {},
+      "id": "merge-sources",
+      "name": "Merge sources",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=${SUPABASE_GENESIS_URL}/rest/v1/trend_signals",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "resolution=ignore-duplicates,return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "bodyContentType": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": { "timeout": 15000 }
+      },
+      "id": "supabase-upsert",
+      "name": "Supabase: upsert trend_signal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "${N8N_CRED_SUPABASE_ID}",
+          "name": "supabase_genesis"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst bySource = items.reduce((acc, it) => { const s = it.json && it.json.source || 'unknown'; acc[s] = (acc[s]||0)+1; return acc; }, {});\nreturn [{ json: { run_at: new Date().toISOString(), total_signals: items.length, by_source: bySource } }];"
+      },
+      "id": "aggregate",
+      "name": "Aggregate run report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    }
+  ],
+  "connections": {
+    "Every 6h Berlin": {
+      "main": [[
+        { "node": "GitHub: LLM trending", "type": "main", "index": 0 },
+        { "node": "HN Algolia: AI stories 48h", "type": "main", "index": 0 }
+      ]]
+    },
+    "GitHub: LLM trending": {
+      "main": [[{ "node": "Normalize GitHub", "type": "main", "index": 0 }]]
+    },
+    "HN Algolia: AI stories 48h": {
+      "main": [[{ "node": "Normalize HN", "type": "main", "index": 0 }]]
+    },
+    "Normalize GitHub": {
+      "main": [[{ "node": "Merge sources", "type": "main", "index": 0 }]]
+    },
+    "Normalize HN": {
+      "main": [[{ "node": "Merge sources", "type": "main", "index": 1 }]]
+    },
+    "Merge sources": {
+      "main": [[{ "node": "Supabase: upsert trend_signal", "type": "main", "index": 0 }]]
+    },
+    "Supabase: upsert trend_signal": {
+      "main": [[{ "node": "Aggregate run report", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "timezone": "Europe/Berlin"
+  }
+}

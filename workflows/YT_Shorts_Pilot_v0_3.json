@@ -1,0 +1,400 @@
+{
+  "_meta": {
+    "notes": "All credentials replaced with ${ENV_VAR} placeholders. Configure via Doppler or .env. Original had hardcoded receiver secret, ngrok URL, Supabase URL, internal n8n IP, Telegram chat ID, public TG channel handle — all replaced. Replace n8n credential IDs with your own after import."
+  },
+  "name": "YT Shorts Pilot v0.3 (zero-touch publish)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 14 * * 1,2,4,5"
+            }
+          ]
+        },
+        "triggerAtStartup": false,
+        "timezone": "Europe/Berlin"
+      },
+      "id": "cron-1400-berlin",
+      "name": "Schedule 14:00 Berlin Mon/Tue/Thu/Fri",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "yt-publish-now",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-manual",
+      "name": "Webhook manual yt-publish-now",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 500]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=${RECEIVER_BASE_URL}/queue/list",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Receiver-Secret", "value": "=${RECEIVER_SECRET}" }
+          ]
+        },
+        "options": { "timeout": 15000 }
+      },
+      "id": "get-queue-list",
+      "name": "GET /queue/list",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filter today's items from queue\nconst today = new Date().toISOString().slice(0,10);\nconst data = $input.first().json;\nconst items = Array.isArray(data.items) ? data.items : [];\nconst todaysItems = items.filter(it => it.publish_date === today);\nreturn todaysItems.length\n  ? todaysItems.map(it => ({ json: { ...it, today } }))\n  : [{ json: { empty: true, today } }];"
+      },
+      "id": "filter-today",
+      "name": "Filter today's items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.empty }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-empty",
+      "name": "Is today queue empty?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "chatId": "=${TELEGRAM_TARGET_CHAT}",
+        "text": "={{ 'Queue empty for ' + $json.today + ' — no YouTube publish today.' }}",
+        "additionalFields": { "parse_mode": "HTML" }
+      },
+      "id": "tg-empty",
+      "name": "TG empty queue",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1120, 250],
+      "credentials": {
+        "telegramApi": { "id": "${N8N_CRED_TELEGRAM_ID}", "name": "Telegram Bot" }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=${SUPABASE_GENESIS_URL}/rest/v1/yt_published?slug=eq.{{ $json.slug }}&select=slug,video_id,youtube_url",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/vnd.pgrst.object+json" }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "response": { "response": { "neverError": true, "fullResponse": false } }
+        }
+      },
+      "id": "check-published",
+      "name": "Supabase: check yt_published",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 550],
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": { "id": "${N8N_CRED_SUPABASE_ID}", "name": "supabase_genesis" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Accept: pgrst.object returns either {slug, video_id, ...} if found, or {code:'PGRST116', ...} for 0 rows (with neverError=true).\n// Sometimes n8n wraps the response in {data: '<stringified json>'} if mime type is unknown — parse that case.\nlet r = $input.first().json || {};\nif (r.data && typeof r.data === 'string') {\n  try { r = JSON.parse(r.data); } catch(e) { r = {}; }\n}\nconst alreadyPublished = !!(r && r.slug && r.video_id) && !r.code;\nconst items = $('Filter today\\'s items').all().map(x => x.json);\nconst firstItem = items.find(i => !i.empty) || {};\nreturn [{ json: { ...firstItem, already_published: alreadyPublished, existing: alreadyPublished ? r : null } }];"
+      },
+      "id": "merge-status",
+      "name": "Merge item + published status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 550]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.already_published }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-already",
+      "name": "Already published?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1560, 550]
+    },
+    {
+      "parameters": {
+        "chatId": "=${TELEGRAM_TARGET_CHAT}",
+        "text": "={{ '<b>' + $json.slug + '</b> already published.\\n' + $json.existing.youtube_url }}",
+        "additionalFields": { "parse_mode": "HTML", "disable_web_page_preview": false }
+      },
+      "id": "tg-already",
+      "name": "TG already published",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1780, 400],
+      "credentials": {
+        "telegramApi": { "id": "${N8N_CRED_TELEGRAM_ID}", "name": "Telegram Bot" }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.rendered }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-rendered",
+      "name": "Already rendered?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1780, 700]
+    },
+    {
+      "parameters": {
+        "chatId": "=${TELEGRAM_TARGET_CHAT}",
+        "text": "={{ '<b>' + $json.slug + '</b> — \"' + $json.title + '\"\\n\\nNot rendered. Trigger manually:\\n<code>curl -X POST ${RECEIVER_BASE_URL}/render_queued -H \"X-Receiver-Secret: $SECRET\" -H \"Content-Type: application/json\" -d ' + \"'\" + '{\"slug\":\"' + $json.slug + '\"}' + \"'\" + '</code>' }}",
+        "additionalFields": { "parse_mode": "HTML" }
+      },
+      "id": "tg-need-render",
+      "name": "TG need render",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2000, 800],
+      "credentials": {
+        "telegramApi": { "id": "${N8N_CRED_TELEGRAM_ID}", "name": "Telegram Bot" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build payload for /youtube/upload from queue item\nconst it = $input.first().json;\nconst mp4 = it.mp4_path || `${$env.CONTENT_MACHINE_RUNS_DIR || '/tmp/runs'}/${it.run_id || ''}/final.mp4`;\nconst titleBase = it.title || it.slug;\nconst title = (titleBase + ' #shorts').slice(0, 100);\nreturn [{ json: {\n  slug: it.slug,\n  mp4_path: mp4,\n  title: title,\n  description: ($env.AUTHOR_NAME || 'Author') + ' · ' + ($env.AUTHOR_URL || 'https://example.com') + '\\n\\n#AI #ClaudeCode #Anthropic #shorts',\n  tags: ['AI','Claude Code','Anthropic','Shorts','AI agents'],\n  lang: it.lang || 'ru',\n  privacy: 'public'\n}}];"
+      },
+      "id": "prepare-upload",
+      "name": "Prepare YT upload payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 600]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=${RECEIVER_BASE_URL}/youtube/upload",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Receiver-Secret", "value": "=${RECEIVER_SECRET}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ mp4_path: $json.mp4_path, title: $json.title, description: $json.description, tags: $json.tags, lang: $json.lang, privacy: $json.privacy }) }}",
+        "options": { "timeout": 300000 }
+      },
+      "id": "post-yt-upload",
+      "name": "POST /youtube/upload",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2220, 600]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-upload-ok",
+      "name": "Upload ok?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2440, 600]
+    },
+    {
+      "parameters": {
+        "chatId": "=${TELEGRAM_TARGET_CHAT}",
+        "text": "={{ '<b>YT upload FAIL</b>\\n\\nslug=' + $('Prepare YT upload payload').first().json.slug + '\\nexit=' + ($json.exit_code ?? '?') + '\\n\\n<code>' + ($json.log || $json.error || 'no log').toString().slice(0, 300) + '</code>' }}",
+        "additionalFields": { "parse_mode": "HTML" }
+      },
+      "id": "tg-upload-fail",
+      "name": "TG upload FAIL",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2660, 750],
+      "credentials": {
+        "telegramApi": { "id": "${N8N_CRED_TELEGRAM_ID}", "name": "Telegram Bot" }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=${N8N_BASE_URL}/webhook/cm-publish",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ caption: '<b>' + $('Prepare YT upload payload').first().json.title.replace(' #shorts','') + '</b>\\n\\n' + $('Prepare YT upload payload').first().json.description.split('\\n')[0] + '\\n\\n' + $json.url + '\\n\\n#claude #ai #shorts' }) }}",
+        "options": { "timeout": 15000 }
+      },
+      "id": "post-tg-channel",
+      "name": "POST cm-publish (TG channel)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2660, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=${SUPABASE_GENESIS_URL}/rest/v1/yt_published",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ slug: $('Prepare YT upload payload').first().json.slug, video_id: $('POST /youtube/upload').first().json.video_id, youtube_url: $('POST /youtube/upload').first().json.url, tg_message_id: $json.message_id || null, privacy: $('Prepare YT upload payload').first().json.privacy, title: $('Prepare YT upload payload').first().json.title, notes: 'Auto-published by YT Shorts Pilot v0.3 cron' }) }}",
+        "options": { "timeout": 15000 }
+      },
+      "id": "supabase-mark",
+      "name": "Supabase: mark yt_published",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2880, 500],
+      "credentials": {
+        "httpHeaderAuth": { "id": "${N8N_CRED_SUPABASE_ID}", "name": "supabase_genesis" }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "=${TELEGRAM_TARGET_CHAT}",
+        "text": "={{ '<b>YouTube + TG published</b>\\n\\nslug: ' + $('Prepare YT upload payload').first().json.slug + '\\nyoutube: ' + $('POST /youtube/upload').first().json.url + '\\ntg msg_id: ' + ($('POST cm-publish (TG channel)').first().json.message_id ?? '?') + '\\nupload: ' + $('POST /youtube/upload').first().json.duration_s + 's' }}",
+        "additionalFields": { "parse_mode": "HTML", "disable_web_page_preview": false }
+      },
+      "id": "tg-success",
+      "name": "TG success",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [3100, 500],
+      "credentials": {
+        "telegramApi": { "id": "${N8N_CRED_TELEGRAM_ID}", "name": "Telegram Bot" }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule 14:00 Berlin Mon/Tue/Thu/Fri": {
+      "main": [[{ "node": "GET /queue/list", "type": "main", "index": 0 }]]
+    },
+    "Webhook manual yt-publish-now": {
+      "main": [[{ "node": "GET /queue/list", "type": "main", "index": 0 }]]
+    },
+    "GET /queue/list": {
+      "main": [[{ "node": "Filter today's items", "type": "main", "index": 0 }]]
+    },
+    "Filter today's items": {
+      "main": [[{ "node": "Is today queue empty?", "type": "main", "index": 0 }]]
+    },
+    "Is today queue empty?": {
+      "main": [
+        [{ "node": "TG empty queue", "type": "main", "index": 0 }],
+        [{ "node": "Supabase: check yt_published", "type": "main", "index": 0 }]
+      ]
+    },
+    "Supabase: check yt_published": {
+      "main": [[{ "node": "Merge item + published status", "type": "main", "index": 0 }]]
+    },
+    "Merge item + published status": {
+      "main": [[{ "node": "Already published?", "type": "main", "index": 0 }]]
+    },
+    "Already published?": {
+      "main": [
+        [{ "node": "TG already published", "type": "main", "index": 0 }],
+        [{ "node": "Already rendered?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Already rendered?": {
+      "main": [
+        [{ "node": "Prepare YT upload payload", "type": "main", "index": 0 }],
+        [{ "node": "TG need render", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare YT upload payload": {
+      "main": [[{ "node": "POST /youtube/upload", "type": "main", "index": 0 }]]
+    },
+    "POST /youtube/upload": {
+      "main": [[{ "node": "Upload ok?", "type": "main", "index": 0 }]]
+    },
+    "Upload ok?": {
+      "main": [
+        [{ "node": "POST cm-publish (TG channel)", "type": "main", "index": 0 }],
+        [{ "node": "TG upload FAIL", "type": "main", "index": 0 }]
+      ]
+    },
+    "POST cm-publish (TG channel)": {
+      "main": [[{ "node": "Supabase: mark yt_published", "type": "main", "index": 0 }]]
+    },
+    "Supabase: mark yt_published": {
+      "main": [[{ "node": "TG success", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "timezone": "Europe/Berlin"
+  }
+}

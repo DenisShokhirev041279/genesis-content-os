@@ -1,0 +1,597 @@
+{
+  "_meta": {
+    "notes": "All credentials replaced with ${ENV_VAR} placeholders. Configure via Doppler or .env. Original had hardcoded Telegram bot token, Telegram channel chat_id, receiver secret, ngrok URL, Supabase URL, Telegram chat ID, public TG channel handle, AUTHOR identity strings — all replaced. Replace n8n credential IDs with your own after import."
+  },
+  "name": "YT Shorts Pilot v0.4 (full autonomy: GPT scenario -> render -> publish)",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        },
+        "triggerAtStartup": false,
+        "timezone": "Europe/Berlin"
+      },
+      "id": "cron-0900-daily",
+      "name": "Schedule 09:00 Berlin daily",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "yt-pilot-v04-now",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-manual-v04",
+      "name": "Webhook manual v04",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 500],
+      "webhookId": "yt-pilot-v04-manual"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=${SUPABASE_GENESIS_URL}/rest/v1/topics?status=eq.queued&order=hype_score.desc.nullslast&limit=1&select=id,title_ru,slug_en,topic_category,notes,hype_score",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "supabase-topic",
+      "name": "Supabase: select topic queued",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 400],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "${N8N_CRED_SUPABASE_ID}",
+          "name": "supabase_genesis"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n splits array response into items, normalize\nlet rows = $input.all().map(x => x.json);\nif (rows.length === 1 && Array.isArray(rows[0])) rows = rows[0];\nconst topic = rows.find(r => r && r.slug_en) || null;\nif (!topic) {\n  return [{ json: { empty: true, today: new Date().toISOString().slice(0,10) } }];\n}\nreturn [{ json: { ...topic, today: new Date().toISOString().slice(0,10) } }];"
+      },
+      "id": "normalize-topic",
+      "name": "Normalize topic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.empty }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-no-topic",
+      "name": "No topic in queue?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "chatId": "=${TELEGRAM_TARGET_CHAT}",
+        "text": "={{ 'YT Pilot v0.4: no queued topics for ' + $json.today + '. Module A (G_A_topic_distiller) should have populated the queue — check.' }}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "tg-no-topic",
+      "name": "TG no topic",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1120, 250],
+      "credentials": {
+        "telegramApi": {
+          "id": "${N8N_CRED_TELEGRAM_ID}",
+          "name": "Telegram Bot"
+        }
+      },
+      "webhookId": "v04-no-topic"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'gpt-4o',\n  temperature: 0.7,\n  max_tokens: 4000,\n  response_format: {type: 'json_object'},\n  messages: [\n    {role: 'system', content: 'You are an AI architect generating scenario.json for a YouTube Short in SHORT_LAYOUT v2 spec. Tone: direct, concrete numbers, no hype. Return ONLY valid JSON.\\n\\nStructure:\\n- 7 segments: 1=hook(5s), 2-6=body(6-7s), 7=cta(6s). Total ~45s.\\n- visual_type: hook_layered, numbered_macbook, project_chips, comparison_strikethrough, diagram_boxes, cta_buttons.\\n- At least 3 different visual_types across 7 segments.\\n- avatar_position: alternates top-right<->top-left, off for 2-3 segments.\\n- bottom_subtitle: curated 1-3 word UPPERCASE punch (not the voice_text). CTA = empty string.\\n- header_tag: > KEYWORD.kebab.\\n\\nEach segment has: id, act, duration, start, voice_text, visual_type, visual_params, bottom_subtitle.\\n\\nFor numbered_macbook visual_params have sections[{number, title, subtitle, code_filename, code_lines:[{text,color}], cue_word, cue_color}].\\nFor comparison_strikethrough — eyebrow, eyebrow_punch, strikethrough_items[], cue_word, cue_color, bottom_highlight.\\nFor project_chips — title, subtitle, chips[], bottom_lead, bottom_punch.\\nFor diagram_boxes — title, subtitle, boxes:[{text,color}], cue_word, cue_color.\\nFor hook_layered — header_tag, shadow_text, punch_word, punch_color, small_caption, bottom_title.\\nFor cta_buttons — lead, button_yes:{text,color}, button_no:{text,color}, username, cta.'},\n    {role: 'user', content: 'Topic: ' + $json.title_ru + '\\nSlug: ' + $json.slug_en + '\\nHype: ' + ($json.hype_score||'?') + '/100\\nKey points: ' + ($json.notes||'none')+'\\nCategory: '+($json.topic_category||'?') + '\\n\\nGenerate scenario.json.'}\n  ]\n}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "gpt-scenario",
+      "name": "GPT-4o: generate scenario",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 550],
+      "credentials": {
+        "openAiApi": {
+          "id": "${N8N_CRED_OPENAI_ID}",
+          "name": "OpenAI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse OpenAI API response: {choices:[{message:{content:'<json>'}}]}\nconst topic = $('Normalize topic').first().json;\nconst raw = $input.first().json;\nlet parsed;\ntry {\n  const content = raw.choices?.[0]?.message?.content;\n  if (!content) return [{ json: { error: 'OpenAI no content', raw_keys: Object.keys(raw) } }];\n  parsed = JSON.parse(content);\n} catch(e) {\n  return [{ json: { error: 'JSON parse fail: ' + e.message, raw: JSON.stringify(raw).slice(0,400) } }];\n}\n// GPT may return in several shapes:\n//   1. {segments: [...], title, ...} — correct\n//   2. {scenario: [...]} — array under scenario key\n//   3. {scenario: {segments: [...], title, ...}} — double-nested\n//   4. [...segments...] — bare array\nlet scenario = null;\nif (Array.isArray(parsed)) {\n  scenario = { segments: parsed };\n} else if (Array.isArray(parsed.scenario)) {\n  scenario = { ...parsed, segments: parsed.scenario };\n  delete scenario.scenario;\n} else if (parsed.scenario && parsed.scenario.segments) {\n  scenario = parsed.scenario;\n} else if (parsed.segments) {\n  scenario = parsed;\n}\nif (!scenario || !Array.isArray(scenario.segments) || scenario.segments.length === 0) {\n  return [{ json: { error: 'no segments in scenario', raw: JSON.stringify(parsed).slice(0,400) } }];\n}\n// Validate segment colors — GPT may return hex instead of color names\nconst validColors = ['yellow','red','blue','green','pink','white'];\nfor (const seg of scenario.segments) {\n  const vp = seg.visual_params || (seg.visual_params = {});\n  if (vp.punch_color && !validColors.includes(vp.punch_color)) vp.punch_color = 'yellow';\n  if (vp.cue_color && !validColors.includes(vp.cue_color)) vp.cue_color = 'blue';\n  if (vp.sections) {\n    for (const sec of vp.sections) {\n      if (sec.cue_color && !validColors.includes(sec.cue_color)) sec.cue_color = 'blue';\n    }\n  }\n}\n// FORCE avatar_position if GPT forgot — otherwise no avatar in final video\nconst defaultAvatarSchedule = ['off','top-right','top-left','top-right','top-left','off','top-center'];\nfor (let i = 0; i < scenario.segments.length; i++) {\n  const seg = scenario.segments[i];\n  const vp = seg.visual_params;\n  if (!vp.avatar_position || vp.avatar_position === '') {\n    vp.avatar_position = defaultAvatarSchedule[i] || (i === 0 ? 'off' : (i % 2 === 0 ? 'top-left' : 'top-right'));\n  }\n  if (seg.act === 'cta') vp.avatar_position = 'top-center';\n  if (seg.act === 'hook') vp.avatar_position = 'off';\n}\nconst today = topic.today;\nscenario.publish_date = today;\nscenario.format = scenario.format || 'short';\nscenario.lang = scenario.lang || 'ru';\nconst slug = scenario.slug || `R${Date.now().toString().slice(-4)}_${(topic.slug_en||'topic').replace(/[^a-zA-Z0-9_]/g,'_')}`;\nscenario.slug = slug;\nreturn [{ json: { topic_id: topic.id, slug, scenario, today } }];"
+      },
+      "id": "build-scenario-payload",
+      "name": "Build scenario payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 550]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-gpt-fail",
+      "name": "GPT fail?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1560, 550]
+    },
+    {
+      "parameters": {
+        "chatId": "=${TELEGRAM_TARGET_CHAT}",
+        "text": "={{ '<b>YT Pilot v0.4 GPT scenario fail</b>\\n\\n' + $json.error + '\\n\\nRaw: <code>' + JSON.stringify($json.scenario || $json.raw || {}).slice(0, 400) + '</code>' }}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "tg-gpt-fail",
+      "name": "TG GPT fail",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1780, 400],
+      "credentials": {
+        "telegramApi": {
+          "id": "${N8N_CRED_TELEGRAM_ID}",
+          "name": "Telegram Bot"
+        }
+      },
+      "webhookId": "v04-gpt-fail"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=${RECEIVER_BASE_URL}/scenario/save",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Receiver-Secret",
+              "value": "=${RECEIVER_SECRET}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ slug: $json.slug, scenario: $json.scenario }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "post-scenario-save",
+      "name": "POST /scenario/save",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 700]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=${RECEIVER_BASE_URL}/render_queued",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Receiver-Secret",
+              "value": "=${RECEIVER_SECRET}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ slug: $('Build scenario payload').first().json.slug, voice_engine: 'elevenlabs' }) }}",
+        "options": {
+          "timeout": 2400000
+        }
+      },
+      "id": "post-render-queued",
+      "name": "POST /render_queued (sync, up to 40 min)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 700]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-render-ok",
+      "name": "Render ok?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2220, 700]
+    },
+    {
+      "parameters": {
+        "chatId": "=${TELEGRAM_TARGET_CHAT}",
+        "text": "={{ '<b>YT Pilot v0.4 render fail</b>\\n\\nslug=' + $('Build scenario payload').first().json.slug + '\\nerror=' + ($json.error || 'unknown') + '\\nlog=<code>' + ($json.log || 'no log').toString().slice(-300) + '</code>' }}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "tg-render-fail",
+      "name": "TG render fail",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2440, 850],
+      "credentials": {
+        "telegramApi": {
+          "id": "${N8N_CRED_TELEGRAM_ID}",
+          "name": "Telegram Bot"
+        }
+      },
+      "webhookId": "v04-render-fail"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build YT upload payload from render result + scenario\nconst render = $input.first().json;\nconst scn = $('Build scenario payload').first().json;\nconst topic = $('Normalize topic').first().json;\nconst title = (render.scenario_title || scn.scenario.title || topic.title_ru || scn.slug).slice(0, 95) + ' #shorts';\nconst authorName = $env.AUTHOR_NAME || 'Author';\nconst authorUrl = $env.AUTHOR_URL || 'https://example.com';\nconst description = `${topic.title_ru}\\n\\n${authorName} · ${authorUrl}\\n\\n#AI #shorts #${(topic.slug_en || '').replace(/-/g,'')}`;\nreturn [{ json: {\n  slug: scn.slug,\n  topic_id: topic.id,\n  mp4_path: render.mp4_path,\n  title: title.slice(0, 100),\n  description,\n  tags: ['AI','shorts',(topic.slug_en || '').slice(0,30)].filter(Boolean),\n  lang: 'ru',\n  privacy: 'public'\n}}];"
+      },
+      "id": "build-yt-payload",
+      "name": "Build YT payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2440, 600]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=${RECEIVER_BASE_URL}/youtube/upload",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Receiver-Secret",
+              "value": "=${RECEIVER_SECRET}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ mp4_path: $json.mp4_path, title: $json.title, description: $json.description, tags: $json.tags, lang: $json.lang, privacy: $json.privacy }) }}",
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "post-yt-upload",
+      "name": "POST /youtube/upload",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2660, 600]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-upload-ok",
+      "name": "Upload ok?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2880, 600]
+    },
+    {
+      "parameters": {
+        "chatId": "=${TELEGRAM_TARGET_CHAT}",
+        "text": "={{ '<b>YT upload FAIL v0.4</b>\\n\\nslug=' + $('Build YT payload').first().json.slug + '\\nexit=' + ($json.exit_code ?? '?') + '\\n<code>' + ($json.log || $json.error || '').toString().slice(-300) + '</code>' }}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "tg-upload-fail",
+      "name": "TG upload fail",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [3100, 750],
+      "credentials": {
+        "telegramApi": {
+          "id": "${N8N_CRED_TELEGRAM_ID}",
+          "name": "Telegram Bot"
+        }
+      },
+      "webhookId": "v04-upload-fail"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $env.TELEGRAM_PUBLIC_CHANNEL_ID, text: 'New YouTube Short!\\n\\n' + $('Build YT payload').first().json.title.replace(' #shorts','') + '\\n\\n' + $json.url, parse_mode: 'HTML' }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "tg-channel-post",
+      "name": "TG public channel post",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3100, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=${SUPABASE_GENESIS_URL}/rest/v1/yt_published",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ slug: $('Build YT payload').first().json.slug, video_id: $('POST /youtube/upload').first().json.video_id, youtube_url: $('POST /youtube/upload').first().json.url, tg_message_id: ($json.result && $json.result.message_id) || null, privacy: 'public', title: $('Build YT payload').first().json.title, notes: 'Auto-published by YT Shorts Pilot v0.4 (full autonomy: GPT scenario + render + upload)' }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "supabase-yt-published",
+      "name": "Supabase: insert yt_published",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3320, 500],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "${N8N_CRED_SUPABASE_ID}",
+          "name": "supabase_genesis"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=${SUPABASE_GENESIS_URL}/rest/v1/topics?id=eq.{{ $('Normalize topic').first().json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'published', published_at: new Date().toISOString(), has_video: true, video_slug: $('Build YT payload').first().json.slug, notes: 'YT: ' + $('POST /youtube/upload').first().json.url }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "supabase-topic-mark",
+      "name": "Supabase: mark topic.yt_video_id",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3540, 500],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "${N8N_CRED_SUPABASE_ID}",
+          "name": "supabase_genesis"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "=${TELEGRAM_TARGET_CHAT}",
+        "text": "={{ '<b>YT Pilot v0.4 ZERO-TOUCH DONE</b>\\n\\nslug: ' + $('Build YT payload').first().json.slug + '\\nyoutube: ' + $('POST /youtube/upload').first().json.url + '\\nhype: ' + $('Normalize topic').first().json.hype_score + '\\nrender: ' + $('POST /render_queued (sync, up to 40 min)').first().json.duration_s + 's, upload: ' + $('POST /youtube/upload').first().json.duration_s + 's' }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "disable_web_page_preview": false
+        }
+      },
+      "id": "tg-success",
+      "name": "TG success",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [3760, 500],
+      "credentials": {
+        "telegramApi": {
+          "id": "${N8N_CRED_TELEGRAM_ID}",
+          "name": "Telegram Bot"
+        }
+      },
+      "webhookId": "v04-success"
+    }
+  ],
+  "connections": {
+    "Schedule 09:00 Berlin daily": {
+      "main": [[{ "node": "Supabase: select topic queued", "type": "main", "index": 0 }]]
+    },
+    "Webhook manual v04": {
+      "main": [[{ "node": "Supabase: select topic queued", "type": "main", "index": 0 }]]
+    },
+    "Supabase: select topic queued": {
+      "main": [[{ "node": "Normalize topic", "type": "main", "index": 0 }]]
+    },
+    "Normalize topic": {
+      "main": [[{ "node": "No topic in queue?", "type": "main", "index": 0 }]]
+    },
+    "No topic in queue?": {
+      "main": [
+        [{ "node": "TG no topic", "type": "main", "index": 0 }],
+        [{ "node": "GPT-4o: generate scenario", "type": "main", "index": 0 }]
+      ]
+    },
+    "GPT-4o: generate scenario": {
+      "main": [[{ "node": "Build scenario payload", "type": "main", "index": 0 }]]
+    },
+    "Build scenario payload": {
+      "main": [[{ "node": "GPT fail?", "type": "main", "index": 0 }]]
+    },
+    "GPT fail?": {
+      "main": [
+        [{ "node": "TG GPT fail", "type": "main", "index": 0 }],
+        [{ "node": "POST /scenario/save", "type": "main", "index": 0 }]
+      ]
+    },
+    "POST /scenario/save": {
+      "main": [[{ "node": "POST /render_queued (sync, up to 40 min)", "type": "main", "index": 0 }]]
+    },
+    "POST /render_queued (sync, up to 40 min)": {
+      "main": [[{ "node": "Render ok?", "type": "main", "index": 0 }]]
+    },
+    "Render ok?": {
+      "main": [
+        [{ "node": "Build YT payload", "type": "main", "index": 0 }],
+        [{ "node": "TG render fail", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build YT payload": {
+      "main": [[{ "node": "POST /youtube/upload", "type": "main", "index": 0 }]]
+    },
+    "POST /youtube/upload": {
+      "main": [[{ "node": "Upload ok?", "type": "main", "index": 0 }]]
+    },
+    "Upload ok?": {
+      "main": [
+        [{ "node": "TG public channel post", "type": "main", "index": 0 }],
+        [{ "node": "TG upload fail", "type": "main", "index": 0 }]
+      ]
+    },
+    "TG public channel post": {
+      "main": [[{ "node": "Supabase: insert yt_published", "type": "main", "index": 0 }]]
+    },
+    "Supabase: insert yt_published": {
+      "main": [[{ "node": "Supabase: mark topic.yt_video_id", "type": "main", "index": 0 }]]
+    },
+    "Supabase: mark topic.yt_video_id": {
+      "main": [[{ "node": "TG success", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "timezone": "Europe/Berlin",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

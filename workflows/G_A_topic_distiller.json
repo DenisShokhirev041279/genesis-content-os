@@ -1,0 +1,323 @@
+{
+  "_meta": {
+    "notes": "All credentials replaced with ${ENV_VAR} placeholders. Configure via Doppler or .env. Replace credential IDs with your own n8n credential IDs after import."
+  },
+  "name": "G_A_topic_distiller",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 6 * * *"
+            }
+          ]
+        },
+        "triggerAtStartup": false,
+        "timezone": "Europe/Berlin"
+      },
+      "id": "trigger-cron-daily",
+      "name": "Daily 06:00 Berlin",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=${SUPABASE_GENESIS_URL}/rest/v1/trend_signals",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "select",
+              "value": "id,source,source_id,title,url,score,captured_at"
+            },
+            {
+              "name": "processed",
+              "value": "eq.false"
+            },
+            {
+              "name": "captured_at",
+              "value": "=gt.{{ $now.minus({hours: 24}).toISO() }}"
+            },
+            {
+              "name": "order",
+              "value": "score.desc.nullslast"
+            },
+            {
+              "name": "limit",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "fetch-signals",
+      "name": "Fetch last-24h signals",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "${N8N_CRED_SUPABASE_ID}",
+          "name": "supabase_genesis"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build digest for LLM\nconst signals = $input.all().map(i => i.json).flat();\nif (!signals.length) { return []; }\nconst digest = signals.slice(0, 80).map((s, i) => `${i+1}. [${s.source}|${s.score ?? '-'}] ${s.title} :: ${s.url}`).join('\\n');\nconst ids = signals.map(s => s.id);\nreturn [{ json: { digest, ids, n: signals.length } }];"
+      },
+      "id": "build-digest",
+      "name": "Build LLM digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { model: 'gpt-4.1-2025-04-14', response_format: { type: 'json_object' }, temperature: 0.4, messages: [ { role: 'system', content: 'You are senior editor of an AI blog. Input: list of trend signals (GitHub + HN). Task: pick 3-5 topics worth standalone articles for an AI architect audience. Drop clones (N libraries doing the same → one topic). Each topic — with clear pain point for the reader. Respond strict JSON: { \"topics\": [ { \"title_ru\": \"...\", \"title_en\": \"...\", \"slug_en\": \"kebab-case-short\", \"topic_category\": \"ai-agents|llm-tools|infra|products|research|other\", \"hype_score\": 0-100, \"rationale\": \"why write this — 1-2 sentences\" } ] }' }, { role: 'user', content: 'Signals from last 24h:\\n' + $json.digest + '\\n\\nGenerate 3-5 topics.' } ] } }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "openai-distill",
+      "name": "GPT-4.1 distill topics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        300
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "${N8N_CRED_OPENAI_ID}",
+          "name": "OpenAI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse GPT JSON, emit one item per topic, attach source_signal_ids\nconst resp = $input.first().json;\nconst content = resp.choices?.[0]?.message?.content || '{}';\nlet parsed; try { parsed = JSON.parse(content); } catch(e) { parsed = { topics: [] }; }\nconst topics = Array.isArray(parsed.topics) ? parsed.topics : [];\nconst ids = $('Build LLM digest').first().json.ids;\nreturn topics.map(t => {\n  const rawSlug = (t.slug_en || t.title_en || '').toLowerCase().replace(/[^a-z0-9-]/g,'-').replace(/-+/g,'-').replace(/^-|-$/g,'').slice(0, 80);\n  const slug = rawSlug || null;\n  return { json: {\n    source: 'distilled',\n    title_raw: t.title_en || t.title_ru || '',\n    title_ru: t.title_ru || null,\n    title_en: t.title_en || null,\n    slug_en: slug,\n    topic_category: t.topic_category || 'other',\n    hype_score: Number(t.hype_score) || 0,\n    priority: 50,\n    status: 'queued',\n    raw_signals: ids,\n    notes: t.rationale || null\n  }};\n});"
+      },
+      "id": "parse-topics",
+      "name": "Parse topics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=${SUPABASE_GENESIS_URL}/rest/v1/topics?on_conflict=slug_en",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=ignore-duplicates,return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "supabase-upsert-topic",
+      "name": "Supabase: upsert topic",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1340,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "${N8N_CRED_SUPABASE_ID}",
+          "name": "supabase_genesis"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=${SUPABASE_GENESIS_URL}/rest/v1/trend_signals?id=in.({{ ($('Build LLM digest').first().json.ids || []).join(',') }})",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { processed: true } }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "mark-processed",
+      "name": "Mark signals processed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "${N8N_CRED_SUPABASE_ID}",
+          "name": "supabase_genesis"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const n_topics = $('Parse topics').all().length;\nconst n_signals = ($('Build LLM digest').first().json.ids || []).length;\nreturn [{ json: { run_at: new Date().toISOString(), signals_processed: n_signals, topics_generated: n_topics } }];"
+      },
+      "id": "aggregate-run",
+      "name": "Aggregate run report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Daily 06:00 Berlin": {
+      "main": [
+        [
+          {
+            "node": "Fetch last-24h signals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch last-24h signals": {
+      "main": [
+        [
+          {
+            "node": "Build LLM digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build LLM digest": {
+      "main": [
+        [
+          {
+            "node": "GPT-4.1 distill topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT-4.1 distill topics": {
+      "main": [
+        [
+          {
+            "node": "Parse topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse topics": {
+      "main": [
+        [
+          {
+            "node": "Supabase: upsert topic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase: upsert topic": {
+      "main": [
+        [
+          {
+            "node": "Mark signals processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark signals processed": {
+      "main": [
+        [
+          {
+            "node": "Aggregate run report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "timezone": "Europe/Berlin"
+  }
+}
