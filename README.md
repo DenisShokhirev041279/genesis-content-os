@@ -36,24 +36,24 @@ Live demo: [genesis.gerdennisai.com](https://genesis.gerdennisai.com) *(placehol
               └──────────────┴──────────┼─────────────┴─────────────┘
                                         │
                           ┌─────────────▼──────────────┐
-                          │  Module C: metrics         │   Plausible + platform APIs
-                          │  → metrics_snapshots       │   (planned, Week 2-3)
+                          │  Module C: metrics         │   Plausible + YouTube + LinkedIn
+                          │  → metrics_snapshots       │   + Telegram + Ghost ingestors
                           └─────────────┬──────────────┘
                                         │
                           ┌─────────────▼──────────────┐
-                          │  Module D: analyzer        │   GPT-4.1 weekly review
-                          │  → insights                │   (planned, Week 3-4)
+                          │  Module D: analyzer        │   GPT-4 weekly review
+                          │  → insights                │   (skeleton, activating after C ≥7d)
                           └─────────────┬──────────────┘
                                         │
                           ┌─────────────▼──────────────┐
                           │  Module E: auto-decision   │   prompt-version bump on
                           │  → prompts (new version)   │   evidence threshold
-                          │                            │   (planned, Week 4-5)
+                          │                            │   + post-merge reconciler
                           └─────────────┬──────────────┘
                                         │
                           ┌─────────────▼──────────────┐
-                          │  Module F: weekly-reports  │
-                          │  → weekly_reports          │   (planned, Week 6+)
+                          │  Module F: weekly-reports  │   Sunday 09:00 Berlin digest
+                          │  → weekly_reports          │   → Telegram DM to Denis
                           └────────────────────────────┘
 
   Storage:  Supabase Postgres + pgvector  (7 tables, 2 views, 1 materialized view)
@@ -103,18 +103,30 @@ Local development from a clean clone:
 |---|---|---|
 | **A — trend-scanner** | GitHub trending + HN top → `trend_signals` → distilled `topics` | live |
 | **B — content-gen** | Topic → post per channel, voice + avatar render | live |
-| **C — metrics** | Pull engagement metrics into `metrics_snapshots` | planned (Week 2-3) |
-| **D — analyzer** | Weekly GPT-4.1 review → `insights` with evidence | planned (Week 3-4) |
-| **E — auto-decision** | Apply approved insights as new prompt versions | planned (Week 4-5) |
-| **F — weekly-reports** | Generate `weekly_reports` markdown digest | planned (Week 6+) |
+| **B — instagram** | Reels publisher via Meta Graph v23 (`scripts/g_b_instagram.py`) | live (prototype) |
+| **C — metrics** | YT + LinkedIn + Telegram + Ghost ingestors → `metrics_snapshots` | live |
+| **D — analyzer** | Weekly GPT-4 review → `insights` with evidence | live (skeleton, activates after C ≥7d) |
+| **E — auto-decision** | Apply approved insights as new prompt versions, with PR + post-merge sync | live (skeleton) |
+| **F — weekly-reports** | Sunday 09:00 Berlin digest → `weekly_reports` + Telegram DM | live |
 
-Module E is the point where Genesis becomes autonomous: it reads its own performance and rewrites its own prompts, with Denis only approving the diff.
+Module E is the point where Genesis becomes autonomous: it reads its own performance and rewrites its own prompts, with Denis only approving the diff on `auto/prompt-*` PRs.
+
+### Metrics ingestors
+
+Module C is now three separate processes you can schedule independently:
+
+- `scripts/g_c_metrics.py` — YouTube Data + Analytics API and LinkedIn `/socialMetadata`, with `--bootstrap` and `--backfill` modes.
+- `scripts/g_c_telegram.py` — channel-level (`post_id=NULL`) subscriber count and 24h post velocity from the Bot API.
+- `scripts/g_c_ghost.py` — newsletter `members_{total,paid,free}` and `posts_total` via Ghost Admin API.
+- `scripts/utm.py` — UTM helper for clients that strip `Referer` (Telegram in-app, Instagram, YouTube copy-paste). Wraps own-domain URLs with `utm_source/medium/campaign/content`; leaves external links untouched.
+
+Per-module design notes live in [`docs/MODULE_C_DESIGN.md`](docs/MODULE_C_DESIGN.md), [`docs/MODULE_D_DESIGN.md`](docs/MODULE_D_DESIGN.md), and [`docs/MODULE_F_DESIGN.md`](docs/MODULE_F_DESIGN.md).
 
 ---
 
 ## Stack
 
-`Supabase Postgres` · `pgvector` · `n8n` · `Doppler` · `OpenAI GPT-4.1` · `OpenAI text-embedding-3-small` · `ElevenLabs` · `HeyGen` · `Ghost CMS` · `LinkedIn API` · `Telegram Bot API` · `YouTube Data API` · `Plausible Analytics` · `TypeScript` · `Python 3.12`
+`Supabase Postgres` · `pgvector` · `n8n` · `Doppler` · `OpenAI GPT-4.1` · `OpenAI text-embedding-3-small` · `ElevenLabs` · `HeyGen` · `Ghost CMS` · `LinkedIn API` · `Telegram Bot API` · `YouTube Data + Analytics API` · `Instagram Graph API v23` · `Plausible Analytics` · `faster-whisper` (subtitles) · `Astro` (site) · `TypeScript` · `Python 3.12`
 
 ---
 
@@ -136,4 +148,4 @@ The Apache-2.0 patent grant matters here: Genesis builds on workflow patterns co
 
 ## Status
 
-Early. Active development. Open to contributors — see [CONTRIBUTING.md](CONTRIBUTING.md). Modules C through F are first-class issues for new contributors.
+Active development. All six modules (A–F) are live; D and E are running as skeletons and graduate to full autonomy once Module C has accumulated ≥7 days of metrics. Open to contributors — see [CONTRIBUTING.md](CONTRIBUTING.md) and the `good first issue` label on the [issue tracker](https://github.com/DenisShokhirev041279/genesis-content-os/issues).
