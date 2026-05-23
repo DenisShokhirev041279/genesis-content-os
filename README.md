@@ -70,7 +70,7 @@ Local development from a clean clone:
 
 1. **Clone and install**
    ```bash
-   git clone https://github.com/dennisshokhirev/genesis-content-os.git
+   git clone https://github.com/DenisShokhirev041279/genesis-content-os.git
    cd genesis-content-os
    ```
 
