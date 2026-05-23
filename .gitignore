@@ -35,3 +35,14 @@ logs/
 *.db
 .cache/
 .tmp/
+
+# Backup files
+*.bak
+*.bak.*
+
+# Local strategy notes (maintainer's working notebook, not part of the public repo)
+Genesis_OS/
+PLAYBOOK_v*.md
+
+# Symlinked code from sibling projects (kept out of public repo)
+scripts/g_b_subtitles.py
