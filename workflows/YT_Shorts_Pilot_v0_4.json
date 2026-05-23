@@ -22,7 +22,10 @@
       "name": "Schedule 09:00 Berlin daily",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.1,
-      "position": [240, 300]
+      "position": [
+        240,
+        300
+      ]
     },
     {
       "parameters": {
@@ -35,7 +38,10 @@
       "name": "Webhook manual v04",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1.1,
-      "position": [240, 500],
+      "position": [
+        240,
+        500
+      ],
       "webhookId": "yt-pilot-v04-manual"
     },
     {
@@ -52,7 +58,10 @@
       "name": "Supabase: select topic queued",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [460, 400],
+      "position": [
+        460,
+        400
+      ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "${N8N_CRED_SUPABASE_ID}",
@@ -68,7 +77,10 @@
       "name": "Normalize topic",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [680, 400]
+      "position": [
+        680,
+        400
+      ]
     },
     {
       "parameters": {
@@ -96,7 +108,10 @@
       "name": "No topic in queue?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [900, 400]
+      "position": [
+        900,
+        400
+      ]
     },
     {
       "parameters": {
@@ -110,7 +125,10 @@
       "name": "TG no topic",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
-      "position": [1120, 250],
+      "position": [
+        1120,
+        250
+      ],
       "credentials": {
         "telegramApi": {
           "id": "${N8N_CRED_TELEGRAM_ID}",
@@ -145,7 +163,10 @@
       "name": "GPT-4o: generate scenario",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1120, 550],
+      "position": [
+        1120,
+        550
+      ],
       "credentials": {
         "openAiApi": {
           "id": "${N8N_CRED_OPENAI_ID}",
@@ -155,13 +176,16 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse OpenAI API response: {choices:[{message:{content:'<json>'}}]}\nconst topic = $('Normalize topic').first().json;\nconst raw = $input.first().json;\nlet parsed;\ntry {\n  const content = raw.choices?.[0]?.message?.content;\n  if (!content) return [{ json: { error: 'OpenAI no content', raw_keys: Object.keys(raw) } }];\n  parsed = JSON.parse(content);\n} catch(e) {\n  return [{ json: { error: 'JSON parse fail: ' + e.message, raw: JSON.stringify(raw).slice(0,400) } }];\n}\n// GPT may return in several shapes:\n//   1. {segments: [...], title, ...} — correct\n//   2. {scenario: [...]} — array under scenario key\n//   3. {scenario: {segments: [...], title, ...}} — double-nested\n//   4. [...segments...] — bare array\nlet scenario = null;\nif (Array.isArray(parsed)) {\n  scenario = { segments: parsed };\n} else if (Array.isArray(parsed.scenario)) {\n  scenario = { ...parsed, segments: parsed.scenario };\n  delete scenario.scenario;\n} else if (parsed.scenario && parsed.scenario.segments) {\n  scenario = parsed.scenario;\n} else if (parsed.segments) {\n  scenario = parsed;\n}\nif (!scenario || !Array.isArray(scenario.segments) || scenario.segments.length === 0) {\n  return [{ json: { error: 'no segments in scenario', raw: JSON.stringify(parsed).slice(0,400) } }];\n}\n// Validate segment colors — GPT may return hex instead of color names\nconst validColors = ['yellow','red','blue','green','pink','white'];\nfor (const seg of scenario.segments) {\n  const vp = seg.visual_params || (seg.visual_params = {});\n  if (vp.punch_color && !validColors.includes(vp.punch_color)) vp.punch_color = 'yellow';\n  if (vp.cue_color && !validColors.includes(vp.cue_color)) vp.cue_color = 'blue';\n  if (vp.sections) {\n    for (const sec of vp.sections) {\n      if (sec.cue_color && !validColors.includes(sec.cue_color)) sec.cue_color = 'blue';\n    }\n  }\n}\n// FORCE avatar_position if GPT forgot — otherwise no avatar in final video\nconst defaultAvatarSchedule = ['off','top-right','top-left','top-right','top-left','off','top-center'];\nfor (let i = 0; i < scenario.segments.length; i++) {\n  const seg = scenario.segments[i];\n  const vp = seg.visual_params;\n  if (!vp.avatar_position || vp.avatar_position === '') {\n    vp.avatar_position = defaultAvatarSchedule[i] || (i === 0 ? 'off' : (i % 2 === 0 ? 'top-left' : 'top-right'));\n  }\n  if (seg.act === 'cta') vp.avatar_position = 'top-center';\n  if (seg.act === 'hook') vp.avatar_position = 'off';\n}\nconst today = topic.today;\nscenario.publish_date = today;\nscenario.format = scenario.format || 'short';\nscenario.lang = scenario.lang || 'ru';\nconst slug = scenario.slug || `R${Date.now().toString().slice(-4)}_${(topic.slug_en||'topic').replace(/[^a-zA-Z0-9_]/g,'_')}`;\nscenario.slug = slug;\nreturn [{ json: { topic_id: topic.id, slug, scenario, today } }];"
+        "jsCode": "// Parse OpenAI API response: {choices:[{message:{content:'<json>'}}]}\nconst topic = $('Normalize topic').first().json;\nconst raw = $input.first().json;\nlet parsed;\ntry {\n  const content = raw.choices?.[0]?.message?.content;\n  if (!content) return [{ json: { error: 'OpenAI no content', raw_keys: Object.keys(raw) } }];\n  parsed = JSON.parse(content);\n} catch(e) {\n  return [{ json: { error: 'JSON parse fail: ' + e.message, raw: JSON.stringify(raw).slice(0,400) } }];\n}\n// GPT may return in several shapes:\n//   1. {segments: [...], title, ...} — correct\n//   2. {scenario: [...]} — array under scenario key\n//   3. {scenario: {segments: [...], title, ...}} — double-nested\n//   4. [...segments...] — bare array\nlet scenario = null;\nif (Array.isArray(parsed)) {\n  scenario = { segments: parsed };\n} else if (Array.isArray(parsed.scenario)) {\n  scenario = { ...parsed, segments: parsed.scenario };\n  delete scenario.scenario;\n} else if (parsed.scenario && parsed.scenario.segments) {\n  scenario = parsed.scenario;\n} else if (parsed.segments) {\n  scenario = parsed;\n}\nif (!scenario || !Array.isArray(scenario.segments) || scenario.segments.length === 0) {\n  return [{ json: { error: 'no segments in scenario', raw: JSON.stringify(parsed).slice(0,400) } }];\n}\n// Validate segment colors — GPT may return hex instead of color names\nconst validColors = ['yellow','red','blue','green','pink','white'];\nfor (const seg of scenario.segments) {\n  const vp = seg.visual_params || (seg.visual_params = {});\n  if (vp.punch_color && !validColors.includes(vp.punch_color)) vp.punch_color = 'yellow';\n  if (vp.cue_color && !validColors.includes(vp.cue_color)) vp.cue_color = 'blue';\n  if (vp.sections) {\n    for (const sec of vp.sections) {\n      if (sec.cue_color && !validColors.includes(sec.cue_color)) sec.cue_color = 'blue';\n    }\n  }\n}\n// FORCE avatar_position: всегда top-right на ВСЕХ сегментах (включая hook+cta).\n// До 2026-05-06 schedule был ['off','top-right','top-left','top-right','top-left','off','top-center']\n// и аватар \"прыгал\" по позициям + пропадал на hook+seg6 — Денис 05.05 жалоба.\n// Теперь стабильная единая позиция — POS_XY в composer_v2 тоже все смаплены на (730, 200).\nfor (let i = 0; i < scenario.segments.length; i++) {\n  const seg = scenario.segments[i];\n  const vp = seg.visual_params;\n  vp.avatar_position = 'top-right';\n}\nconst today = topic.today;\nscenario.publish_date = today;\nscenario.format = scenario.format || 'short';\nscenario.lang = scenario.lang || 'ru';\nconst slug = scenario.slug || `R${Date.now().toString().slice(-4)}_${(topic.slug_en||'topic').replace(/[^a-zA-Z0-9_]/g,'_')}`;\nscenario.slug = slug;\nreturn [{ json: { topic_id: topic.id, slug, scenario, today } }];"
       },
       "id": "build-scenario-payload",
       "name": "Build scenario payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1340, 550]
+      "position": [
+        1340,
+        550
+      ]
     },
     {
       "parameters": {
@@ -189,7 +213,10 @@
       "name": "GPT fail?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1560, 550]
+      "position": [
+        1560,
+        550
+      ]
     },
     {
       "parameters": {
@@ -203,7 +230,10 @@
       "name": "TG GPT fail",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
-      "position": [1780, 400],
+      "position": [
+        1780,
+        400
+      ],
       "credentials": {
         "telegramApi": {
           "id": "${N8N_CRED_TELEGRAM_ID}",
@@ -240,7 +270,10 @@
       "name": "POST /scenario/save",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1780, 700]
+      "position": [
+        1780,
+        700
+      ]
     },
     {
       "parameters": {
@@ -270,7 +303,10 @@
       "name": "POST /render_queued (sync, up to 40 min)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2000, 700]
+      "position": [
+        2000,
+        700
+      ]
     },
     {
       "parameters": {
@@ -298,7 +334,10 @@
       "name": "Render ok?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [2220, 700]
+      "position": [
+        2220,
+        700
+      ]
     },
     {
       "parameters": {
@@ -312,7 +351,10 @@
       "name": "TG render fail",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
-      "position": [2440, 850],
+      "position": [
+        2440,
+        850
+      ],
       "credentials": {
         "telegramApi": {
           "id": "${N8N_CRED_TELEGRAM_ID}",
@@ -329,7 +371,10 @@
       "name": "Build YT payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2440, 600]
+      "position": [
+        2440,
+        600
+      ]
     },
     {
       "parameters": {
@@ -359,7 +404,10 @@
       "name": "POST /youtube/upload",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2660, 600]
+      "position": [
+        2660,
+        600
+      ]
     },
     {
       "parameters": {
@@ -387,7 +435,10 @@
       "name": "Upload ok?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [2880, 600]
+      "position": [
+        2880,
+        600
+      ]
     },
     {
       "parameters": {
@@ -401,7 +452,10 @@
       "name": "TG upload fail",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
-      "position": [3100, 750],
+      "position": [
+        3100,
+        750
+      ],
       "credentials": {
         "telegramApi": {
           "id": "${N8N_CRED_TELEGRAM_ID}",
@@ -425,7 +479,10 @@
       "name": "TG public channel post",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [3100, 500]
+      "position": [
+        3100,
+        500
+      ]
     },
     {
       "parameters": {
@@ -457,7 +514,10 @@
       "name": "Supabase: insert yt_published",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [3320, 500],
+      "position": [
+        3320,
+        500
+      ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "${N8N_CRED_SUPABASE_ID}",
@@ -491,7 +551,10 @@
       "name": "Supabase: mark topic.yt_video_id",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [3540, 500],
+      "position": [
+        3540,
+        500
+      ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "${N8N_CRED_SUPABASE_ID}",
@@ -512,7 +575,10 @@
       "name": "TG success",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
-      "position": [3760, 500],
+      "position": [
+        3760,
+        500
+      ],
       "credentials": {
         "telegramApi": {
           "id": "${N8N_CRED_TELEGRAM_ID}",
@@ -524,67 +590,219 @@
   ],
   "connections": {
     "Schedule 09:00 Berlin daily": {
-      "main": [[{ "node": "Supabase: select topic queued", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Supabase: select topic queued",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Webhook manual v04": {
-      "main": [[{ "node": "Supabase: select topic queued", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Supabase: select topic queued",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Supabase: select topic queued": {
-      "main": [[{ "node": "Normalize topic", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Normalize topic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Normalize topic": {
-      "main": [[{ "node": "No topic in queue?", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "No topic in queue?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "No topic in queue?": {
       "main": [
-        [{ "node": "TG no topic", "type": "main", "index": 0 }],
-        [{ "node": "GPT-4o: generate scenario", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "TG no topic",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GPT-4o: generate scenario",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "GPT-4o: generate scenario": {
-      "main": [[{ "node": "Build scenario payload", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Build scenario payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Build scenario payload": {
-      "main": [[{ "node": "GPT fail?", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "GPT fail?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "GPT fail?": {
       "main": [
-        [{ "node": "TG GPT fail", "type": "main", "index": 0 }],
-        [{ "node": "POST /scenario/save", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "TG GPT fail",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "POST /scenario/save",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "POST /scenario/save": {
-      "main": [[{ "node": "POST /render_queued (sync, up to 40 min)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "POST /render_queued (sync, up to 40 min)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "POST /render_queued (sync, up to 40 min)": {
-      "main": [[{ "node": "Render ok?", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Render ok?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Render ok?": {
       "main": [
-        [{ "node": "Build YT payload", "type": "main", "index": 0 }],
-        [{ "node": "TG render fail", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Build YT payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "TG render fail",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Build YT payload": {
-      "main": [[{ "node": "POST /youtube/upload", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "POST /youtube/upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "POST /youtube/upload": {
-      "main": [[{ "node": "Upload ok?", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Upload ok?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Upload ok?": {
       "main": [
-        [{ "node": "TG public channel post", "type": "main", "index": 0 }],
-        [{ "node": "TG upload fail", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "TG public channel post",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "TG upload fail",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "TG public channel post": {
-      "main": [[{ "node": "Supabase: insert yt_published", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Supabase: insert yt_published",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Supabase: insert yt_published": {
-      "main": [[{ "node": "Supabase: mark topic.yt_video_id", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Supabase: mark topic.yt_video_id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Supabase: mark topic.yt_video_id": {
-      "main": [[{ "node": "TG success", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "TG success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
