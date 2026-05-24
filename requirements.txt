@@ -1,0 +1,19 @@
+# Genesis Content OS — runtime dependencies
+# Python 3.12+
+
+# HTTP клиент для Supabase REST / Telegram / Meta Graph / Whisper API
+requests>=2.31.0
+
+# JWT для Ghost Admin API (g_c_ghost.py)
+PyJWT>=2.8.0
+
+# YouTube Data API v3 (g_c_metrics.py)
+google-api-python-client>=2.100.0
+google-auth>=2.23.0
+google-auth-oauthlib>=1.1.0
+
+# Bundled ffmpeg with libass for subtitle burn-in (g_b_subtitles.py via MotionViral)
+imageio-ffmpeg>=0.4.9
+
+# Date utilities for metrics windows
+python-dateutil>=2.8.2
