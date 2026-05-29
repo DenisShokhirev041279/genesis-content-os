@@ -46,3 +46,4 @@ PLAYBOOK_v*.md
 
 # Symlinked code from sibling projects (kept out of public repo)
 scripts/g_b_subtitles.py
+MULTI_CHANNEL_LOG.md
