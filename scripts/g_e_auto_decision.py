@@ -135,8 +135,15 @@ def is_actionable(suggestion: str) -> tuple[bool, str]:
     return False, "no_concrete_change"
 
 
-def detect_prompt_file(suggestion: str) -> str:
-    """Decide which prompts/<file>.md is targeted. Default scenario_v2.md."""
+def detect_prompt_file(suggestion: str, target_module: str | None = None) -> str:
+    """Decide which prompts/<file>.md is targeted.
+
+    target_module (из Module D insight) имеет приоритет:
+      'topic_distiller' → topic_distiller.md (выбор тем / рост)
+      'scenario_v2'/None → scenario_v2.md (визуальная структура Shorts)
+    """
+    if target_module == "topic_distiller":
+        return "topic_distiller.md"
     s = suggestion.lower()
     if "scenario_v3" in s or "v3.md" in s:
         return "scenario_v3.md"
@@ -366,7 +373,7 @@ def main():
     for ins in actionable:
         pc = ins.get("proposed_change") or {}
         suggestion = pc["suggestion"]
-        prompt_file = detect_prompt_file(suggestion)
+        prompt_file = detect_prompt_file(suggestion, pc.get("target_module"))
         prompt_path = REPO / PROMPTS_DIR_RELATIVE / prompt_file
         if not prompt_path.exists():
             print(f"  [skip] {prompt_path} not in repo")

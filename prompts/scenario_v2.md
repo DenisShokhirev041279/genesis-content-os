@@ -111,7 +111,7 @@ Hype: {topic.hype_score}/100
       "act": "cta",
       "duration": 6.0,
       "start": 39.0,
-      "voice_text": "Полный гайд — на канале DennisCraft AI. Подписывайся.",
+      "voice_text": "Полный гайд — на сайте gerdennisai.com. Подписывайся.",
       "visual_type": "cta_buttons",
       "visual_params": {
         "header_tag": "<тот же>",

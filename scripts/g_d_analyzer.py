@@ -279,36 +279,125 @@ def group_summary(rows: list[dict]) -> dict:
     }
 
 
+# ============== Cross-channel analysis (added 2026-05-29) ==============
+# Замыкает эволюционный цикл: не только YT visual_types, но и КАКИЕ ТЕМЫ/ХУКИ
+# залетают по всем каналам (Plausible трафик по темам + Instagram engagement).
+
+CROSS_PLATFORMS = ["plausible", "instagram", "telegram", "ghost"]
+
+
+def fetch_cross_metrics(since_iso: str, until_iso: str) -> list[dict]:
+    """Все метрики не-youtube каналов за период."""
+    rows = []
+    for plat in CROSS_PLATFORMS:
+        page = 0
+        while True:
+            chunk = sb_get("metrics_snapshots", {
+                "select": "captured_at,metric_name,metric_value,platform,metadata,post_id",
+                "captured_at": f"gte.{since_iso}",
+                "and": f"(captured_at.lt.{until_iso})",
+                "platform": f"eq.{plat}",
+                "order": "captured_at.desc",
+                "limit": "1000",
+                "offset": str(page * 1000),
+            })
+            rows.extend(chunk)
+            if len(chunk) < 1000:
+                break
+            page += 1
+            if page > 10:
+                break
+    return rows
+
+
+def build_cross_channel_summary(cross_rows: list[dict]) -> dict:
+    """Кросс-канальные сигналы для аналитика: какие темы/хуки привлекают."""
+    plausible_camp: dict[str, dict] = defaultdict(lambda: {"visitors": 0.0, "pageviews": 0.0})
+    ig_reels: dict[str, dict] = {}
+    ig_account: dict[str, float] = {}
+
+    for m in cross_rows:
+        plat = m.get("platform")
+        meta = m.get("metadata") or {}
+        name = m.get("metric_name") or ""
+        val = m.get("metric_value")
+        if val is None:
+            continue
+        val = float(val)
+
+        if plat == "plausible":
+            if name == "campaign_visitors":
+                plausible_camp[meta.get("utm_campaign", "?")]["visitors"] = val
+            elif name == "campaign_pageviews":
+                plausible_camp[meta.get("utm_campaign", "?")]["pageviews"] = val
+        elif plat == "instagram":
+            if name.startswith("reel_"):
+                mid = meta.get("ig_media_id", "?")
+                r = ig_reels.setdefault(mid, {"caption": (meta.get("caption") or "")[:100]})
+                r[name.replace("reel_", "")] = val
+            elif name in ("followers_count", "account_reach_day"):
+                ig_account[name] = val
+
+    ig_list = []
+    for mid, r in ig_reels.items():
+        reach = r.get("reach", 0) or 0
+        eng = r.get("total_interactions", 0) or 0
+        r["media_id"] = mid
+        r["engagement_rate"] = round(eng / reach, 3) if reach else 0.0
+        ig_list.append(r)
+    ig_list.sort(key=lambda x: x.get("reach", 0), reverse=True)
+
+    return {
+        "plausible_top_topics_by_traffic": sorted(
+            [{"campaign": k, **v} for k, v in plausible_camp.items()],
+            key=lambda x: x["visitors"], reverse=True)[:10],
+        "instagram_account": ig_account,
+        "instagram_top_reels_by_reach": ig_list[:8],
+        "instagram_worst_reels_by_reach": ig_list[-5:] if len(ig_list) > 8 else [],
+    }
+
+
 # ============== GPT call ==============
 
-SYSTEM_PROMPT = """You are Genesis Content OS analyst. Find statistically meaningful patterns in YouTube Shorts performance data. Output ONLY valid JSON.
+SYSTEM_PROMPT = """You are Genesis Content OS analyst. Find statistically meaningful patterns across ALL channels (YouTube visual structure + cross-channel topic/hook performance). Output ONLY valid JSON.
+
+You receive TWO data blocks:
+1. `videos` — per-YouTube-video metrics + visual_types (structure analysis).
+2. `cross_channel` — Plausible blog/site traffic per topic (utm_campaign), Instagram per-Reel reach+engagement with captions, IG account followers/reach.
+
+ANALYTICAL PRIORITIES (in order):
+A. GROWTH DIAGNOSIS (most important): Instagram has very low followers vs post count. Find WHY from reel data — which captions/hooks/topics get high reach (algorithm push) vs near-zero? Name the pattern with numbers (e.g. "reach 161 for concrete pain-point hook vs 10 for mythology hook").
+B. TOPIC RESONANCE: cross-reference Plausible traffic-by-topic + IG reach-by-caption + YT views — which TOPICS/THEMES win across channels?
+C. STRUCTURE (legacy): YouTube visual_types patterns (only among videos that have visual_types populated; empty = legacy data, not a signal).
 
 Rules:
 - Use ONLY numbers from the provided data, never invent.
 - confidence=low if n<5, medium if 5-9, high if n>=10.
-- 1-3 insights max. If sample sizes are tiny, output 1 insight + honest data_quality_notes.
-- IMPORTANT: ignore the difference between "has visual_types" vs "missing visual_types" — empty visual_types means legacy data, not a real signal. Compare ONLY among videos that have visual_types populated.
+- 2-4 insights max, prioritize GROWTH + TOPIC over structure.
 
-The `suggestion` field MUST be a concrete, mechanical edit to prompts/scenario_v2.md:
-  ✓ GOOD: "Increase bias on visual_type=numbered_card from 28% to 55% for hook segments"
-  ✓ GOOD: "Reduce comparison_strikethrough share from 30% to 10%, redistribute to project_chips"
-  ✓ GOOD: "Add constraint: code_card max 1 per video"
-  ✗ BAD:  "Investigate why X performs better"
-  ✗ BAD:  "Consider simplifying visual layouts"
-  ✗ BAD:  "Review the scenario_v2.md"
-
-The suggestion must contain at least one number/percentage OR an explicit "from X to Y" / "set X to Y" / "max N per …" change. No vague verbs (consider, investigate, review, explore).
+Each `suggestion` MUST be a concrete mechanical change with a number or explicit from-X-to-Y:
+  ✓ "Shift distiller topic mix: +40% pain-point/how-to, -40% mythology-metaphor (IG reach 161 vs 10)"
+  ✓ "IG caption rule: open first line with concrete problem, not mythology — top-3 reels by reach all do"
+  ✓ "Increase visual_type=numbered_card from 28% to 55% for hook segments"
+  ✗ BAD: "Investigate why X performs better", "Consider simplifying"
+Add field `target_module`: "topic_distiller" for topic/growth, "scenario_v2" for visual structure.
+No vague verbs (consider, investigate, review, explore).
 """
 
 
-def build_user_prompt(rows: list[dict], summary: dict, week_iso: str) -> str:
+def build_user_prompt(rows: list[dict], summary: dict, week_iso: str,
+                      cross_channel: dict | None = None) -> str:
     payload = {
         "week_iso": week_iso,
         "videos": rows,
         "summary": summary,
+        "cross_channel": cross_channel or {},
         "note_for_analyst": (
-            "Field 'visual_types' is the ordered list of segment layouts in the video. "
-            "Empty list means scenario.json wasn't found locally — treat as missing data."
+            "videos[].visual_types = ordered segment layouts (empty = legacy, ignore). "
+            "cross_channel.plausible_top_topics_by_traffic = blog/site visits per topic "
+            "(utm_campaign = topic slug). cross_channel.instagram_top/worst_reels_by_reach = "
+            "per-Reel reach+engagement+caption (caption = the hook). Compare hooks of high-reach "
+            "vs low-reach reels to diagnose IG growth."
         ),
     }
     return (
@@ -317,7 +406,8 @@ def build_user_prompt(rows: list[dict], summary: dict, week_iso: str) -> str:
         "Return JSON exactly in this shape:\n"
         '{\n'
         '  "insights": [\n'
-        '    {"hypothesis": "...", "evidence": "...", "confidence": "low|medium|high", "n": 0, "suggestion": "..."}\n'
+        '    {"hypothesis": "...", "evidence": "...", "confidence": "low|medium|high", '
+        '"n": 0, "suggestion": "...", "target_module": "topic_distiller|scenario_v2"}\n'
         '  ],\n'
         '  "data_quality_notes": "..."\n'
         '}'
@@ -360,16 +450,20 @@ def insert_insights(payload: dict, week_iso: str, summary: dict) -> list[str]:
         suggestion = (ins.get("suggestion") or "").strip()
         if suggestion:
             text = f"{text}\n\nSuggestion: {suggestion}"
+        target = ins.get("target_module") or "scenario_v2"
+        # category по target_module: topic/growth → 'topic', визуал → 'structure'
+        category = "topic" if target == "topic_distiller" else "structure"
         rows.append({
             "week_iso": week_iso,
             "insight_text": text[:4000],
-            "category": "performance",
+            "category": category,
             "proposed_change": {
                 "hypothesis": ins.get("hypothesis"),
                 "evidence": ins.get("evidence"),
                 "confidence": ins.get("confidence"),
                 "sample_size": ins.get("n"),
                 "suggestion": ins.get("suggestion"),
+                "target_module": target,
                 "data_quality_notes": payload.get("data_quality_notes"),
                 "group_summary": summary,
             },
@@ -418,19 +512,26 @@ def main():
     metrics = fetch_metrics(since.isoformat(), until.isoformat())
     yt_map = fetch_yt_published()
     topic_map = fetch_topics()
-    print(f"  metrics rows: {len(metrics)} | yt_published: {len(yt_map)} | topics: {len(topic_map)}")
+    print(f"  YT metrics rows: {len(metrics)} | yt_published: {len(yt_map)} | topics: {len(topic_map)}")
 
     rows = aggregate(metrics, yt_map, topic_map)
     summary = group_summary(rows)
-    print(f"  videos with data: {summary['total_videos']}")
-    print(f"  visual_type segment counts: {summary['visual_type_total_segments']}")
-    print(f"  topic_category counts: {summary['by_topic_category']}")
 
-    if summary["total_videos"] == 0:
-        print("[skip] no video metrics in window — nothing to analyze")
+    # cross-channel (Plausible + Instagram + TG + Ghost) — замыкает эволюционный цикл
+    cross_rows = fetch_cross_metrics(since.isoformat(), until.isoformat())
+    cross = build_cross_channel_summary(cross_rows)
+    print(f"  cross-channel rows: {len(cross_rows)} | "
+          f"plausible topics: {len(cross['plausible_top_topics_by_traffic'])} | "
+          f"IG reels: {len(cross['instagram_top_reels_by_reach'])} | "
+          f"IG followers: {cross['instagram_account'].get('followers_count')}")
+    print(f"  videos with data: {summary['total_videos']}")
+
+    # анализируем если есть ХОТЬ какие-то данные (YT ИЛИ cross-channel)
+    if summary["total_videos"] == 0 and not cross_rows:
+        print("[skip] no metrics in window (YT + cross) — nothing to analyze")
         return 0
 
-    user_prompt = build_user_prompt(rows, summary, week_label)
+    user_prompt = build_user_prompt(rows, summary, week_label, cross_channel=cross)
 
     if args.dry_run:
         print("\n--- DRY RUN: GPT system prompt ---")
