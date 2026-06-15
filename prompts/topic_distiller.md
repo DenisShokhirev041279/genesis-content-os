@@ -22,6 +22,8 @@
 - `infra` / serverless / API reliability
 - `llm-tools` / how-to / production patterns
 
+**Поддерживайте или увеличивайте долю тем из категорий `infra`, `ai-agents`, `llm-tools` до >70% от всего контента.**
+
 ### 3. Доля форматов
 - Pain-point / how-to / production-проблемы: **целевая доля ≥60%**
 - Мифология / метафора / «красивые» нарративы: **≤25%** (низкий reach, для брендинга не для роста)
