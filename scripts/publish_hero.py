@@ -316,7 +316,7 @@ def publish_telegram(mp4: Path, plan: dict[str, str], dry: bool) -> dict:
     full_text = text
     if yt_url:
         full_text = f"{text}\n\n🎬 {yt_url}"
-    bot_token = os.environ.get("TG_BOT_TOKEN", "6697781236:AAFCoyUisaLvDY__XFkYWa7t5XVTKQ3of_U")
+    bot_token = os.environ.get("TG_BOT_TOKEN")
     if dry:
         return {"ok": True, "dry": True, "would_post": {
             "endpoint": "Bot API sendMessage (text + YT preview)",
