@@ -310,6 +310,111 @@ def build_pr_body(insight, prompt_file, hypothesis, evidence, confidence, n, sug
     )
 
 
+def build_group_pr_body(applied: list[dict], prompt_file: str) -> str:
+    lines = [
+        f"## Auto-consolidated prompt change — `prompts/{prompt_file}`\n",
+        f"Applied **{len(applied)} insight(s)** in one PR (grouped by target file to "
+        f"avoid conflicting parallel rewrites).\n",
+    ]
+    for i in applied:
+        pc = i.get("proposed_change") or {}
+        lines.append(
+            f"\n### insight `{short_id(i['id'])}` · confidence `{pc.get('confidence','')}` "
+            f"· n={pc.get('sample_size') or pc.get('n')}\n"
+            f"> {pc.get('hypothesis','')}\n\n"
+            f"**Change:** {pc.get('suggestion','')}\n"
+        )
+    lines.append(
+        "\n---\n## Review checklist\n"
+        "- [ ] Diff integrates all listed insights without contradiction\n"
+        "- [ ] Numbers / percentages match the evidence\n"
+        "- [ ] No regressions to unrelated rules\n"
+    )
+    return "".join(lines)
+
+
+def process_group(prompt_file: str, group: list[dict], args) -> str | None:
+    """Apply all insights targeting ONE file into a single branch/PR.
+
+    Guarded auto-merge: merge only if EVERY insight in the group is
+    confidence='high' (and --no-auto-merge not set). Any 'medium' → PR left
+    open for Denis. Sequential rewrite avoids the parallel-clobber that made
+    4 separate PRs conflict (W25-W27 incident, 2026-07-11).
+    """
+    prompt_path = REPO / PROMPTS_DIR_RELATIVE / prompt_file
+    week = max((i.get("week_iso") or "Wxx" for i in group), default="Wxx")
+    branch = f"auto/prompt-{week}-grp{short_id(group[0]['id'])}"
+
+    current = prompt_path.read_text()
+    applied: list[dict] = []
+    for ins in group:
+        pc = ins.get("proposed_change") or {}
+        suggestion = pc.get("suggestion", "")
+        print(f"  → {ins['id'][:8]} ({pc.get('confidence')}): {suggestion[:90]}")
+        if args.dry_run:
+            applied.append(ins)
+            continue
+        new_body = gpt_rewrite(current, suggestion)
+        if new_body.strip() == current.strip():
+            print("    [skip] GPT returned identical body")
+            continue
+        current = new_body
+        applied.append(ins)
+
+    if not applied:
+        print("  [group] no effective change")
+        return None
+    if args.dry_run or args.no_pr:
+        print(f"  [{'dry-run' if args.dry_run else 'no-pr'}] would apply "
+              f"{len(applied)} insight(s) to {prompt_file}")
+        return None
+
+    prev = git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    try:
+        git("checkout", "main", check=False)
+        git("fetch", "origin", "main", check=False)
+        git("reset", "--hard", "origin/main", check=False)
+        git("checkout", "-b", branch)
+        prompt_path.write_text(current)
+        git("add", str(prompt_path.relative_to(REPO)))
+        body_lines = "\n".join(
+            f"- {short_id(i['id'])}: {(i.get('proposed_change') or {}).get('suggestion','')[:100]}"
+            for i in applied)
+        git("commit", "-m",
+            f"prompts({prompt_file}): auto-apply {len(applied)} insight(s) {week}\n\n"
+            f"{body_lines}\n\n"
+            f"Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>")
+        git("push", "-u", "origin", branch)
+
+        title = f"auto/prompt {week} — {prompt_file} ({len(applied)} insight(s))"
+        r = gh("pr", "create", "--title", title,
+               "--body", build_group_pr_body(applied, prompt_file),
+               "--base", "main", "--head", branch)
+        pr_url = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else None
+
+        all_high = all((i.get("proposed_change") or {}).get("confidence") == "high"
+                       for i in applied)
+        merged = False
+        if pr_url and all_high and not args.no_auto_merge:
+            mr = gh("pr", "merge", pr_url, "--squash", "--delete-branch", check=False)
+            merged = mr.returncode == 0
+            print(f"  [auto-merge] {'✓ MERGED' if merged else 'FAILED: ' + mr.stderr[:120]}")
+        elif pr_url:
+            why = "auto-merge disabled" if args.no_auto_merge else "medium-confidence in group → manual review"
+            print(f"  [manual] PR left open: {pr_url} ({why})")
+
+        for i in applied:
+            pc = i.get("proposed_change") or {}
+            sb_patch(f"insights?id=eq.{i['id']}", {
+                "status": "applied",
+                "proposed_change": {**pc, "pr_url": pr_url, "auto_merged": merged,
+                                    "applied_at": datetime.now(timezone.utc).isoformat()},
+            })
+        return pr_url
+    finally:
+        git("checkout", prev or "main", check=False)
+
+
 # ============== Main ==============
 
 def fetch_proposed_insights() -> list[dict]:
@@ -328,6 +433,8 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--no-pr", action="store_true", help="GPT call but skip PR")
     ap.add_argument("--insight-id", type=str)
+    ap.add_argument("--no-auto-merge", action="store_true",
+                    help="never auto-merge; leave every PR open for manual review")
     args = ap.parse_args()
 
     if not SUPABASE_KEY:
@@ -370,50 +477,28 @@ def main():
 
     ensure_clean_repo()
 
+    if not args.dry_run and not args.no_pr and not OPENAI_API_KEY:
+        sys.exit("Missing OPENAI_API_KEY")
+
+    # Group actionable insights by target prompt file → ONE PR per file.
+    # Multiple insights on the same file are applied sequentially on one
+    # branch, so parallel rewrites can't clobber each other.
+    groups: dict[str, list[dict]] = {}
     for ins in actionable:
         pc = ins.get("proposed_change") or {}
-        suggestion = pc["suggestion"]
-        prompt_file = detect_prompt_file(suggestion, pc.get("target_module"))
-        prompt_path = REPO / PROMPTS_DIR_RELATIVE / prompt_file
-        if not prompt_path.exists():
-            print(f"  [skip] {prompt_path} not in repo")
+        prompt_file = detect_prompt_file(pc.get("suggestion", ""), pc.get("target_module"))
+        if not (REPO / PROMPTS_DIR_RELATIVE / prompt_file).exists():
+            print(f"  [skip] {prompt_file} not in repo")
             continue
+        groups.setdefault(prompt_file, []).append(ins)
 
-        print(f"\n--- Insight {ins['id'][:8]} → {prompt_file} ---")
-        print(f"  Suggestion: {suggestion[:200]}")
+    print("  grouped into " + ", ".join(f"{k}({len(v)})" for k, v in groups.items()))
+    merge_mode = "manual (--no-auto-merge)" if args.no_auto_merge else "auto-merge if ALL high-confidence"
+    print(f"  merge policy: {merge_mode}")
 
-        current = prompt_path.read_text()
-
-        if args.dry_run:
-            print("  [dry-run] would call GPT, build branch, open PR")
-            # Show what filter approved
-            continue
-
-        if not OPENAI_API_KEY:
-            sys.exit("Missing OPENAI_API_KEY")
-
-        print("  Calling OpenAI for prompt rewrite...")
-        t0 = time.time()
-        new_body = gpt_rewrite(current, suggestion)
-        print(f"    done in {time.time() - t0:.1f}s, "
-              f"{len(current)} chars → {len(new_body)} chars")
-
-        if new_body.strip() == current.strip():
-            print("  [skip] GPT returned identical body — no PR")
-            continue
-
-        if args.no_pr:
-            print("  [no-pr] skipping branch/PR creation")
-            continue
-
-        pr_url = make_branch_and_pr(ins, prompt_file, new_body, dry_run=False)
-        print(f"  PR: {pr_url}")
-
-        sb_patch(f"insights?id=eq.{ins['id']}", {
-            "status": "applied",
-            "proposed_change": {**pc, "pr_url": pr_url,
-                                "applied_at": datetime.now(timezone.utc).isoformat()},
-        })
+    for prompt_file, group in groups.items():
+        print(f"\n--- {prompt_file}: {len(group)} insight(s) ---")
+        process_group(prompt_file, group, args)
 
     return 0
 
