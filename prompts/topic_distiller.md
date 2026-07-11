@@ -18,13 +18,15 @@
 
 ### 2. Приоритетные категории (кросс-канальный резонанс)
 Темы, которые заходят сразу на YouTube + Plausible + Instagram:
-- `ai-agents` (YT до 1396 views)
+- `ai-agents` (YT до 1396 views, топ-4 Plausible, IG, YT)
 - `infra` / serverless / API reliability
 - `llm-tools` / how-to / production patterns
 
 ### 3. Доля форматов
 - Pain-point / how-to / production-проблемы: **целевая доля ≥60%**
+- ai-agents / llm-tools: **+40%** к текущей доле (за счёт снижения generic/other)
 - Мифология / метафора / «красивые» нарративы: **≤25%** (низкий reach, для брендинга не для роста)
+- Generic/other: **-40%** от текущей доли
 
 ## Аудитория-якорь
 Denis Shokhirev — Enterprise AI архитектор (Erlangen). ЦА: AI/ML инженеры, CTO,
