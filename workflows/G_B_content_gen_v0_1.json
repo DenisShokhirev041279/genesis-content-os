@@ -1,7 +1,4 @@
 {
-  "_meta": {
-    "notes": "All credentials replaced with ${ENV_VAR} placeholders. Configure via Doppler or .env. The original workflow had hardcoded OpenAI API key, Ghost Admin keyId/keySecret, LinkedIn Bearer token, LinkedIn person URN, Telegram chat IDs and bot token, and personal author identity strings — all replaced. Replace n8n credential IDs with your own after import."
-  },
   "name": "G_B_content_gen v0.1 (Supabase topics, no MacBook dep)",
   "nodes": [
     {
@@ -10,7 +7,7 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "30 9 * * *"
+              "expression": "30 8 * * *"
             }
           ]
         },
@@ -18,15 +15,18 @@
         "timezone": "Europe/Berlin"
       },
       "id": "wf-schedule",
-      "name": "Daily 09:30 Berlin",
+      "name": "Daily 08:30 Berlin",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [200, 300]
+      "position": [
+        200,
+        300
+      ]
     },
     {
       "parameters": {
         "method": "GET",
-        "url": "=${SUPABASE_GENESIS_URL}/rest/v1/topics?status=eq.queued&select=id,slug_en,title_ru,title_en,topic_category,hype_score&order=priority.desc.nullslast,hype_score.desc.nullslast&limit=1",
+        "url": "={{$env.SUPABASE_GENESIS_URL}}/rest/v1/topics?status=eq.queued&select=id,slug_en,title_ru,title_en,topic_category,hype_score,volkov_format&order=priority.desc.nullslast,hype_score.desc.nullslast&limit=1",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {
@@ -43,11 +43,14 @@
       "name": "GET Supabase queued topic",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [420, 300],
+      "position": [
+        420,
+        300
+      ],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "${N8N_CRED_SUPABASE_ID}",
-          "name": "supabase_genesis"
+          "id": "z9KfDddxStUBbK3E",
+          "name": "Supabase Genesis apikey (fixed 2026-05-24)"
         }
       }
     },
@@ -55,9 +58,10 @@
       "parameters": {
         "conditions": {
           "options": {
-            "caseSensitive": true,
+            "version": 2,
             "leftValue": "",
-            "typeValidation": "loose"
+            "caseSensitive": true,
+            "typeValidation": "strict"
           },
           "conditions": [
             {
@@ -78,17 +82,23 @@
       "name": "Has Supabase topic?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [640, 300]
+      "position": [
+        640,
+        300
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// Robust to n8n auto-split of array response\nlet t = $input.first().json;\nif (Array.isArray(t)) t = t[0];\nif (!t || !t.slug_en) {\n  throw new Error('No topic from Supabase: ' + JSON.stringify(t).slice(0,200));\n}\n\n// Generate slug_ru by transliterating title_ru\nfunction tr(s) {\n  const m = {'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'yo','ж':'zh','з':'z','и':'i','й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u','ф':'f','х':'kh','ц':'ts','ч':'ch','ш':'sh','щ':'sch','ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya'};\n  return (s||'').toLowerCase().split('').map(c => m[c] !== undefined ? m[c] : c).join('').replace(/[^a-z0-9-]/g,'-').replace(/-+/g,'-').replace(/^-|-$/g,'').slice(0,80);\n}\nconst slugRu = tr(t.title_ru);\nconst slugEn = t.slug_en;\n\nconst BLOG_BASE = $env.BLOG_BASE_URL || 'https://example.com/blog';\nconst ruUrl = BLOG_BASE + '/' + slugRu + '/';\nconst enUrl = BLOG_BASE + '/' + slugEn + '/';\n\nconst AUTHOR_NAME = $env.AUTHOR_NAME || 'Author';\nconst AUTHOR_URL = $env.AUTHOR_URL || 'https://example.com';\nconst AUTHOR_BIO = $env.AUTHOR_BIO || 'AI architect.';\n\nconst prompt = `You are ${AUTHOR_NAME}. ${AUTHOR_BIO}\n\nWrite TWO expert articles on the SAME topic — one in Russian, one in English.\n\nRU title: \"${t.title_ru}\"\nEN title: \"${t.title_en}\"\n\nRequirements for EACH version:\n- 900-1200 words\n- Structure: opening hook (2-3 paragraphs) → 3-5 H2 sections with H3 subsections where useful → FAQ block with 4-5 Q&A formatted as <h3>Question?</h3><p>Answer</p> → conclusion with CTA\n- Style: expert, first-person, concrete code examples, numbers, tool names\n- Avoid marketing fluff (no \"game-changer\", \"revolutionize\", \"disrupt\", \"unlock\")\n- Use <ul>/<ol> bullets, <pre><code class=\\\"language-xxx\\\"> code blocks, <table> when comparing\n- Prepend each article HTML with a JSON-LD Schema.org Article block: <script type=\\\"application/ld+json\\\">{\\\"@context\\\":\\\"https://schema.org\\\",\\\"@type\\\":\\\"Article\\\",\\\"headline\\\":\\\"...\\\",\\\"author\\\":{\\\"@type\\\":\\\"Person\\\",\\\"name\\\":\\\"${AUTHOR_NAME}\\\",\\\"url\\\":\\\"${AUTHOR_URL}\\\"},\\\"datePublished\\\":\\\"${new Date().toISOString().split('T')[0]}\\\",\\\"inLanguage\\\":\\\"...\\\"}</script>\n\nOutput STRICTLY in this format:\n\n===RU===\nTITLE: <Russian title without quotes>\nCONTENT:\n<HTML body in Russian>\n\n===EN===\nTITLE: <English title without quotes>\nCONTENT:\n<HTML body in English>`;\n\nreturn [{ json: {\n  topic_id: t.id,\n  prompt,\n  slug_ru: slugRu,\n  slug_en: slugEn,\n  title_ru: t.title_ru,\n  title_en: t.title_en,\n  ru_url: ruUrl,\n  en_url: enUrl,\n  has_video: false,\n  video_slug: null,\n  hype_score: t.hype_score,\n  date: new Date().toISOString().split('T')[0]\n}}];"
+        "jsCode": "// Robust to n8n auto-split of array response\nlet t = $input.first().json;\nif (Array.isArray(t)) t = t[0];\nif (!t || !t.slug_en) {\n  throw new Error('No topic from Supabase: ' + JSON.stringify(t).slice(0,200));\n}\n\nfunction tr(s) {\n  const m = {'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'yo','ж':'zh','з':'z','и':'i','й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u','ф':'f','х':'kh','ц':'ts','ч':'ch','ш':'sh','щ':'sch','ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya'};\n  return (s||'').toLowerCase().split('').map(c => m[c] !== undefined ? m[c] : c).join('').replace(/[^a-z0-9-]/g,'-').replace(/-+/g,'-').replace(/^-|-$/g,'').slice(0,80);\n}\nconst vf = (t.volkov_format) || 'provocation';\nconst LI_FORMATS = {\n  provocation: 'one-line hook with a frame-flip -> analogy from ANOTHER industry -> pivot \"this is not about [topic], it is about you\" -> two living camps (already shipped vs still demoing) -> ONE concrete number or threat -> \"the window is closing\" -> CTA-flex (\"I work with teams that already made the switch\").',\n  resource_list: '\"X you can use right now. No fluff.\" -> 5 short bullets (name - one-line value, NO links) -> one number-accusation -> \"Save this and send it to someone who needs it.\"',\n  '7_signs': 'hook via authority or fresh news -> personal stat (e.g. \"11 came, 1 passed\") -> \"it is not that they are bad, it is a different job\" -> 5-7 self-check signs each a mirror -> verdict (\"fewer than three? not AI-native\") -> CTA-flex.'\n};\nconst liStructure = LI_FORMATS[vf] || LI_FORMATS.provocation;\nconst slugRu = tr(t.title_ru);\nconst slugEn = t.slug_en;\nconst slugDe = slugEn + '-de';\n\nconst BLOG_BASE = $env.BLOG_BASE_URL || 'https://gerdennisai.com/blog';\nconst ruUrl = BLOG_BASE + '/' + slugRu + '/';\nconst enUrl = BLOG_BASE + '/' + slugEn + '/';\nconst deUrl = BLOG_BASE + '/' + slugDe + '/';\n\n// === Denis Shokhirev identity anchor (used in EACH article) ===\nconst IDENTITY = `I'm Denis Shokhirev — Enterprise AI architect based in Erlangen, Germany. I run DennisCraft AI Studio, where I ship AI systems for DACH B2B clients (logistics, fintech, industrial automation). I hold a Russian software patent (Rospatent #2025612789) for NextGen Pathways, an agentic workflow system. Over the last six months I shipped 14 production AI agents on a stack that includes Claude, Supabase, n8n, Doppler, and self-hosted Postgres. I write here weekly about what actually ships in regulated European markets — not demos, not roadmaps.`;\n\nlet prompt = `${IDENTITY}\n\nWrite THREE expert blog posts on the SAME topic — Russian, English, German.\n\nRU title: \"${t.title_ru}\"\nEN title: \"${t.title_en}\"\n\n═══════════════════════════════════════════════════════════\nHARD CONSTRAINTS — break ANY of these → invalid output, regenerate:\n\n1. **LENGTH: 950–1200 words per version (NOT including HTML tags).** Count before emitting. Below 950 = retry. Above 1200 = trim to fit.\n\n2. **NO HALLUCINATED PRODUCT NAMES.** Use only real, named tools/libraries you are CERTAIN exist (Claude Code, Anthropic SDK, OpenAI cookbook, semgrep, bandit, gitleaks, OWASP, postgres, supabase, n8n). If you reference an internal concept, describe the PATTERN, never invent a branded product like \"X Code Governor\", \"Y Sentinel\", \"Z Pipeline\" — the reader will Google it, find nothing, and lose trust.\n\n3. **NO BANNED PHRASES** (case-insensitive): \"redefined\", \"dives into\", \"dive deep\", \"level up\", \"game-changer\", \"game changer\", \"revolutionize\", \"revolutionary\", \"stop relying on luck\", \"non-optional\", \"unleash\", \"unlock the power\", \"in today's fast-paced\", \"in the modern era\", \"boost productivity\", \"supercharge\", \"harness\", \"leverage cutting-edge\", \"elevate\", \"robust\" (replace with \"stable\" / \"production-grade\"), \"comprehensive\" (replace with \"complete\" / specific scope), \"delve\", \"navigate the landscape\", \"ever-evolving\", \"paradigm shift\", \"synergy\", \"seamless integration\", \"крайне важно\", \"переломный момент\", \"погружаемся\", \"знание которое изменит мир\".\n\n4. **IDENTITY ANCHOR FIRST PARAGRAPH.** Open EACH article with a sentence that grounds the reader: who I am + where + what stack. Reuse from IDENTITY above. Drop generic openings like \"Large Language Models have...\". Open with a CONCRETE pain or moment from production.\n\n5. **CONCRETE NUMBERS WITH SOURCE.** When citing a stat — name the source AND a year AND ideally link to it. \"A 2024 Stanford CodeML paper found 38% of LLM-generated Python contained CWE-89 patterns\" beats \"studies show LLMs are unsafe\". If you don't have a real source, drop the stat and use first-person observation instead: \"On three of my recent agent deployments I caught the same SQL-injection pattern in generated DB layer code.\"\n\n6. **SCHEMA.ORG JSON-LD** prepended to HTML body:\n\\`<script type=\"application/ld+json\">{\"@context\":\"https://schema.org\",\"@type\":\"Article\",\"headline\":\"<title>\",\"author\":{\"@type\":\"Person\",\"name\":\"Denis Shokhirev\",\"url\":\"https://gerdennisai.com\",\"jobTitle\":\"Enterprise AI Architect\",\"affiliation\":{\"@type\":\"Organization\",\"name\":\"DennisCraft AI Studio\",\"address\":\"Erlangen, Germany\"}},\"datePublished\":\"${new Date().toISOString().split('T')[0]}\",\"inLanguage\":\"<ru|en|de>\",\"wordCount\":<actual>,\"publisher\":{\"@type\":\"Organization\",\"name\":\"DennisCraft AI Studio\"}}</script>\\`\n\n7. **CLOSE WITH A QUESTION + CTA.** Last paragraph asks the reader a concrete production question (not \"any thoughts?\"). Example: \"Which stage in your LLM pipeline catches the most issues in prod — static analysis, runtime sandbox, or human review? I'd genuinely like to know.\" Then ONE line CTA: \"I run a free 30-min stack audit for DACH founders building AI in regulated markets. DM me on LinkedIn or write to @ger_dennis_ai.\"\n\n8. **HTML structure**:\n   - JSON-LD <script> first\n   - <p> opening hook (2–3 sentences, ground reader)\n   - 3–5 <h2> sections with <h3> subsections where useful\n   - <pre><code class=\"language-python|typescript|bash|yaml\"> blocks (REAL working code, not pseudo-code, 8–20 lines)\n   - <table> when comparing 3+ items\n   - <h2>FAQ</h2> block with 4–5 <h3>Question?</h3><p>Answer 2–3 sentences</p>\n   - Closing paragraph (question + CTA)\n\n═══════════════════════════════════════════════════════════\nLANGUAGE-SPECIFIC RULES:\n\n**RU version** — for Russian-speaking developers (devs, AI engineers, СТО уровня в RU/CIS):\n- Прямая, экспертная подача. Без хайпа. Без \"вы узнаете, как...\" — сразу к делу.\n- Английские термины — оставляй в оригинале (Claude Code, n8n, RAG), не транслитерируй.\n- Числа писать цифрами, не словами.\n- \"Я\" — единственное число (не \"мы строим\"), это личная позиция.\n\n**EN version** — for global tech audience (architects, CTOs, founders):\n- Direct, no fluff. American English, NOT British.\n- Code variable names + technical terms in English.\n- Cite at least 1 real external source (Anthropic docs, OpenAI cookbook, OWASP, academic paper) with URL if possible.\n\n**DE version** — for DACH market (German-speaking software architects, CTOs in regulated mid-market):\n- **Sie-Form throughout.** No \"Du\".\n- Professional Hochdeutsch. Avoid Anglicisms where good German exists (use \"Sicherheitsprüfung\" not \"Security Check\", \"Bereitstellung\" not \"Deployment\"). Where the English term is industry-standard (API, Cloud, Token, Pipeline) — keep it.\n- Mention at least ONE DACH-relevant compliance anchor where the topic permits: DSGVO (GDPR), BSI Grundschutz, NIS2, ISO 27001, EU AI Act.\n- Tone: systematic, regulation-aware, conservative on hype. \"Erprobt im Produktivbetrieb\" beats \"innovativ\".\n- Author byline format: \"von Denis Shokhirev, Enterprise AI Architect aus Erlangen\"\n\n═══════════════════════════════════════════════════════════\n\n═══════════════════════════════════════════════════════════\nLINKEDIN POST (отдельный deliverable — в блоке ===LINKEDIN===):\n\nAlso write ONE LinkedIn post (120-180 words) for Denis's DACH B2B audience (CMOs, founders, tech leads).\nUse EXACTLY ONE structure - the following - and do NOT mix in any other format:\n${liStructure}\n\nLinkedIn post RULES:\n- Deutsch, Sie-Form (formal), professioneller DACH-Ton. Keine Hype-Wörter.\n- NO link/URL in the body (link goes to first comment separately). End on a CTA-flex, not \"read the article\".\n- Follow the structure above EXACTLY, beat by beat. Do NOT write it as a first-person case study or a \"just published\" blog summary.\n- For the provocation structure you MUST include all of: an analogy from a NON-tech industry (cars, sports, aviation, construction); two explicitly contrasted camps; one concrete number used as a threat; a \"the window is closing\" beat; and a CTA-flex (\"I work with...\").\n- Keep it tight: 110-160 words.\n- Max 5 hashtags.\n\n═══════════════════════════════════════════════════════════\nTELEGRAM POST (Russian, отдельно — в блоке ===TELEGRAM_RU===):\n\nAlso write ONE Telegram post in RUSSIAN (90-150 words) for a Russian dev/founder audience, using the SAME structure as the LinkedIn one (${liStructure}), but:\n- Natural Russian, sharper and more direct than LinkedIn (Telegram allows directness).\n- NO link in the text (the system appends the blog link automatically).\n- End with a forward-CTA: «Перешли тому, кому это сейчас нужно.»\n- 0-2 hashtags max. Plain text, NO markdown, NO HTML tags.\n\nOUTPUT FORMAT (strict, no preamble, no markdown fences):\n\n===RU===\nTITLE: <Russian title without quotes, drop trailing punctuation>\nCONTENT:\n<HTML body in Russian, includes JSON-LD prepended>\n\n===EN===\nTITLE: <English title without quotes>\nCONTENT:\n<HTML body in English, includes JSON-LD>\n\n===DE===\nTITLE: <German title without quotes>\nCONTENT:\n<HTML body in German, includes JSON-LD>\n\n===LINKEDIN===\n<LinkedIn-Post AUF DEUTSCH, Sie-Form, Hochdeutsch, plain text, kein Markdown, kein Link im Body, max 5 Hashtags #KI #EnterpriseAI #Automatisierung #DACH #B2B>\n\n===TELEGRAM_RU===\n<Telegram post in RUSSIAN, plain text, no link>`;\n\n\n// --- loop closed: тянем шаблон промпта с GitHub main, fallback = inline выше ---\ntry {\n  const _r = await this.helpers.httpRequest({ method:'GET', url:'https://raw.githubusercontent.com/DenisShokhirev041279/genesis-content-os/main/prompts/content_factory.md', returnFullResponse:false });\n  const _md = typeof _r==='string'?_r:(_r.body||'');\n  const _m = _md.match(/## Prompt template\\s*```(.*?)```/s);\n  if (_m && _m[1].length > 3000) {\n    let _t = _m[1].replace(/^\\n/,'').replace(/\\n$/,'');\n    prompt = _t.split('{{IDENTITY}}').join(IDENTITY)\n               .split('{{LI_STRUCTURE}}').join(liStructure)\n               .split('{{TITLE_RU}}').join(t.title_ru)\n               .split('{{TITLE_EN}}').join(t.title_en)\n               .split('{{DATE}}').join(new Date().toISOString().split('T')[0]);\n  }\n} catch(e) { /* fallback = inline prompt */ }\n\nreturn [{ json: {\n  topic_id: t.id,\n  prompt,\n  slug_ru: slugRu,\n  slug_en: slugEn,\n  slug_de: slugDe,\n  title_ru: t.title_ru,\n  title_en: t.title_en,\n  ru_url: ruUrl,\n  en_url: enUrl,\n  de_url: deUrl,\n  has_video: false,\n  video_slug: null,\n  hype_score: t.hype_score,\n  volkov_format: vf,\n  date: new Date().toISOString().split('T')[0]\n}}];"
       },
       "id": "wf-prepare",
       "name": "Prepare Prompts + URLs",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [860, 240]
+      "position": [
+        860,
+        240
+      ]
     },
     {
       "parameters": {
@@ -110,41 +120,58 @@
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({model:'gpt-4.1',messages:[{role:'system',content:'You are an expert technical writer. Always respond in the exact format requested, no preamble.'},{role:'user',content:$json.prompt}],temperature:0.7,max_tokens:7000}) }}",
+        "body": "={{ JSON.stringify({model:'gpt-4.1',messages:[{role:'system',content:'You are an expert technical writer. Always respond in the exact format requested, no preamble.'},{role:'user',content:$json.prompt}],temperature:0.7,max_tokens:14000}) }}",
         "options": {
           "timeout": 180000
-        }
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi"
       },
       "id": "wf-gpt",
       "name": "GPT-4.1 Write Bilingual",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1080, 240]
+      "position": [
+        1080,
+        240
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "2rRu9efMYpINfLXN",
+          "name": "OpenAI"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "const raw = $input.first().json.choices?.[0]?.message?.content || '';\nconst prep = $('Prepare Prompts + URLs').first().json;\n\n// split by ===RU=== / ===EN===\nconst ruMatch = raw.match(/===RU===([\\s\\S]*?)===EN===/);\nconst enMatch = raw.match(/===EN===([\\s\\S]*)$/);\n\nfunction extract(block){\n  if (!block) return {title:null, html:null};\n  const tm = block.match(/TITLE:\\s*(.+?)\\n/);\n  const cm = block.match(/CONTENT:\\s*([\\s\\S]+)/);\n  return {\n    title: tm ? tm[1].trim() : null,\n    html: cm ? cm[1].trim() : null,\n  };\n}\n\nconst ru = extract(ruMatch ? ruMatch[1] : null);\nconst en = extract(enMatch ? enMatch[1] : null);\n\nif (!ru.title || !ru.html || !en.title || !en.html) {\n  throw new Error('Failed to parse bilingual response. Raw: ' + raw.substring(0, 500));\n}\n\n// prepend hreflang <link> tags into each HTML for AEO cross-language signal\nconst hreflangRu = `<link rel=\"alternate\" hreflang=\"ru\" href=\"${prep.ru_url}\" /><link rel=\"alternate\" hreflang=\"en\" href=\"${prep.en_url}\" /><link rel=\"alternate\" hreflang=\"x-default\" href=\"${prep.en_url}\" />`;\n\nreturn [{ json: {\n  title_ru: ru.title,\n  html_ru: hreflangRu + ru.html,\n  slug_ru: prep.slug_ru,\n  title_en: en.title,\n  html_en: hreflangRu + en.html,\n  slug_en: prep.slug_en,\n  ru_url: prep.ru_url,\n  en_url: prep.en_url,\n  has_video: prep.has_video,\n  video_slug: prep.video_slug,\n  date: prep.date,\n}}];"
+        "jsCode": "const raw = $input.first().json.choices?.[0]?.message?.content || '';\nconst prep = $('Prepare Prompts + URLs').first().json;\n\nconst ruMatch = raw.match(/===RU===([\\s\\S]*?)===EN===/);\nconst enMatch = raw.match(/===EN===([\\s\\S]*?)===DE===/);\nconst deMatch = raw.match(/===DE===([\\s\\S]*?)(?:===LINKEDIN===|===TELEGRAM_RU===|$)/);\nconst liMatch = raw.match(/===LINKEDIN===([\\s\\S]*?)(?:===TELEGRAM_RU===|$)/);\nconst tgMatch = raw.match(/===TELEGRAM_RU===([\\s\\S]*)$/);\n\nfunction extract(block){\n  if (!block) return {title:null, html:null};\n  const tm = block.match(/TITLE:\\s*(.+?)\\n/);\n  const cm = block.match(/CONTENT:\\s*([\\s\\S]+)/);\n  return {\n    title: tm ? tm[1].trim() : null,\n    html: cm ? cm[1].trim() : null,\n  };\n}\n\nconst ru = extract(ruMatch ? ruMatch[1] : null);\nconst en = extract(enMatch ? enMatch[1] : null);\nconst de = extract(deMatch ? deMatch[1] : null);\n\nif (!ru.title || !ru.html || !en.title || !en.html || !de.title || !de.html) {\n  throw new Error('Failed to parse trilingual response. Raw start: ' + raw.substring(0, 800));\n}\n\nconst linkedin_text = liMatch ? liMatch[1].trim() : null;\nconst telegram_ru = tgMatch ? tgMatch[1].trim() : null;\n// hreflang block for all 3 languages\nconst hreflang = `<link rel=\"alternate\" hreflang=\"ru\" href=\"${prep.ru_url}\" /><link rel=\"alternate\" hreflang=\"en\" href=\"${prep.en_url}\" /><link rel=\"alternate\" hreflang=\"de\" href=\"${prep.de_url}\" /><link rel=\"alternate\" hreflang=\"x-default\" href=\"${prep.en_url}\" />`;\n\nreturn [{ json: {\n  linkedin_text,\n  telegram_ru,\n  title_ru: ru.title,\n  html_ru: hreflang + ru.html,\n  slug_ru: prep.slug_ru,\n  title_en: en.title,\n  html_en: hreflang + en.html,\n  slug_en: prep.slug_en,\n  title_de: de.title,\n  html_de: hreflang + de.html,\n  slug_de: prep.slug_de,\n  ru_url: prep.ru_url,\n  en_url: prep.en_url,\n  de_url: prep.de_url,\n  has_video: prep.has_video,\n  video_slug: prep.video_slug,\n  date: prep.date,\n}}];"
       },
       "id": "wf-parse",
       "name": "Parse Bilingual Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1300, 240]
+      "position": [
+        1300,
+        240
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// Pure JS Ghost JWT — no require('crypto') needed (n8n sandbox compatible)\n// Reads keyId and keySecret from env: GHOST_ADMIN_KEY = \"<keyId>:<keySecret>\"\nconst K=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];\nfunction rr(n,x){return(x>>>n)|(x<<(32-n));}\nfunction sha256(bytes){let h0=0x6a09e667,h1=0xbb67ae85,h2=0x3c6ef372,h3=0xa54ff53a,h4=0x510e527f,h5=0x9b05688c,h6=0x1f83d9ab,h7=0x5be0cd19;const l=bytes.length;const bl=l*8;const pad=new Uint8Array(((l+9+63)&~63));pad.set(bytes);pad[l]=0x80;const dv=new DataView(pad.buffer);dv.setUint32(pad.length-4,bl,false);for(let off=0;off<pad.length;off+=64){const w=new Int32Array(64);for(let i=0;i<16;i++)w[i]=dv.getInt32(off+i*4,false);for(let i=16;i<64;i++){const s0=(rr(7,w[i-15])^rr(18,w[i-15])^(w[i-15]>>>3));const s1=(rr(17,w[i-2])^rr(19,w[i-2])^(w[i-2]>>>10));w[i]=(w[i-16]+s0+w[i-7]+s1)|0;}let a=h0,b=h1,c=h2,d=h3,e=h4,f=h5,g=h6,h=h7;for(let i=0;i<64;i++){const S1=rr(6,e)^rr(11,e)^rr(25,e);const ch=(e&f)^(~e&g);const t1=(h+S1+ch+K[i]+w[i])|0;const S0=rr(2,a)^rr(13,a)^rr(22,a);const maj=(a&b)^(a&c)^(b&c);const t2=(S0+maj)|0;h=g;g=f;f=e;e=(d+t1)|0;d=c;c=b;b=a;a=(t1+t2)|0;}h0=(h0+a)|0;h1=(h1+b)|0;h2=(h2+c)|0;h3=(h3+d)|0;h4=(h4+e)|0;h5=(h5+f)|0;h6=(h6+g)|0;h7=(h7+h)|0;}const r=new Uint8Array(32);const rv=new DataView(r.buffer);rv.setUint32(0,h0);rv.setUint32(4,h1);rv.setUint32(8,h2);rv.setUint32(12,h3);rv.setUint32(16,h4);rv.setUint32(20,h5);rv.setUint32(24,h6);rv.setUint32(28,h7);return r;}\nfunction hmacSha256(key,msg){if(key.length>64){key=sha256(key);}const k=new Uint8Array(64);k.set(key);const ip=new Uint8Array(64);const op=new Uint8Array(64);for(let i=0;i<64;i++){ip[i]=k[i]^0x36;op[i]=k[i]^0x5c;}const inner=new Uint8Array(64+msg.length);inner.set(ip);inner.set(msg,64);const ih=sha256(inner);const outer=new Uint8Array(64+32);outer.set(op);outer.set(ih,64);return sha256(outer);}\nfunction b64url(buf){return Buffer.from(buf).toString('base64').replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=/g,'');}\nconst ghostAdminKey = $env.GHOST_ADMIN_KEY || '';\nif (!ghostAdminKey.includes(':')) throw new Error('GHOST_ADMIN_KEY env must be in format <keyId>:<keySecret>');\nconst [keyId, keySecret] = ghostAdminKey.split(':');\nconst now=Math.floor(Date.now()/1000);\nconst header=b64url(JSON.stringify({alg:'HS256',typ:'JWT',kid:keyId}));\nconst payload=b64url(JSON.stringify({iat:now,exp:now+300,aud:'/admin/'}));\nconst sigInput=new TextEncoder().encode(header+'.'+payload);\nconst keyBytes=Uint8Array.from(keySecret.match(/.{2}/g).map(b=>parseInt(b,16)));\nconst sig=b64url(hmacSha256(keyBytes,sigInput));\nconst item=$input.first().json;\nreturn [{json:{...item, ghost_jwt: header+'.'+payload+'.'+sig}}];"
+        "jsCode": "// Pure JS Ghost JWT — no require('crypto') needed (n8n sandbox compatible)\n// Reads keyId and keySecret from env: GHOST_ADMIN_KEY = \"<keyId>:<keySecret>\"\nconst K=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];\nfunction rr(n,x){return(x>>>n)|(x<<(32-n));}\nfunction sha256(bytes){let h0=0x6a09e667,h1=0xbb67ae85,h2=0x3c6ef372,h3=0xa54ff53a,h4=0x510e527f,h5=0x9b05688c,h6=0x1f83d9ab,h7=0x5be0cd19;const l=bytes.length;const bl=l*8;const pad=new Uint8Array(((l+9+63)&~63));pad.set(bytes);pad[l]=0x80;const dv=new DataView(pad.buffer);dv.setUint32(pad.length-4,bl,false);for(let off=0;off<pad.length;off+=64){const w=new Int32Array(64);for(let i=0;i<16;i++)w[i]=dv.getInt32(off+i*4,false);for(let i=16;i<64;i++){const s0=(rr(7,w[i-15])^rr(18,w[i-15])^(w[i-15]>>>3));const s1=(rr(17,w[i-2])^rr(19,w[i-2])^(w[i-2]>>>10));w[i]=(w[i-16]+s0+w[i-7]+s1)|0;}let a=h0,b=h1,c=h2,d=h3,e=h4,f=h5,g=h6,h=h7;for(let i=0;i<64;i++){const S1=rr(6,e)^rr(11,e)^rr(25,e);const ch=(e&f)^(~e&g);const t1=(h+S1+ch+K[i]+w[i])|0;const S0=rr(2,a)^rr(13,a)^rr(22,a);const maj=(a&b)^(a&c)^(b&c);const t2=(S0+maj)|0;h=g;g=f;f=e;e=(d+t1)|0;d=c;c=b;b=a;a=(t1+t2)|0;}h0=(h0+a)|0;h1=(h1+b)|0;h2=(h2+c)|0;h3=(h3+d)|0;h4=(h4+e)|0;h5=(h5+f)|0;h6=(h6+g)|0;h7=(h7+h)|0;}const r=new Uint8Array(32);const rv=new DataView(r.buffer);rv.setUint32(0,h0);rv.setUint32(4,h1);rv.setUint32(8,h2);rv.setUint32(12,h3);rv.setUint32(16,h4);rv.setUint32(20,h5);rv.setUint32(24,h6);rv.setUint32(28,h7);return r;}\nfunction hmacSha256(key,msg){if(key.length>64){key=sha256(key);}const k=new Uint8Array(64);k.set(key);const ip=new Uint8Array(64);const op=new Uint8Array(64);for(let i=0;i<64;i++){ip[i]=k[i]^0x36;op[i]=k[i]^0x5c;}const inner=new Uint8Array(64+msg.length);inner.set(ip);inner.set(msg,64);const ih=sha256(inner);const outer=new Uint8Array(64+32);outer.set(op);outer.set(ih,64);return sha256(outer);}\nfunction b64url(buf){return Buffer.from(buf).toString('base64').replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=/g,'');}\nconst ghostAdminKey = $env.GHOST_ADMIN_KEY || '';\nif (!ghostAdminKey.includes(':')) throw new Error('GHOST_ADMIN_KEY env must be in format <keyId>:<keySecret>');\nconst [keyId, keySecret] = ghostAdminKey.split(':');\nconst now=Math.floor(Date.now()/1000);\nconst header=b64url(JSON.stringify({alg:'HS256',typ:'JWT',kid:keyId}));\nconst payload=b64url(JSON.stringify({iat:now,exp:now+300,aud:'/admin/'}));\nconst sigInput=new TextEncoder().encode(header+'.'+payload);\nconst keyBytes=Uint8Array.from(keySecret.match(/.{2}/g).map(b=>parseInt(b,16)));\nconst sig=b64url(hmacSha256(keyBytes,sigInput));\nconst item=$input.first().json;\n\nfunction withUtm(url, source) {\n  if (!url) return url;\n  const slugEn = item.slug_en || '';\n  const sep = url.includes('?') ? '&' : '?';\n  return url + sep + 'utm_source=' + source + '&utm_medium=social&utm_campaign=' + encodeURIComponent(slugEn);\n}\n\nreturn [{json: {\n  ...item,\n  ghost_jwt: header+'.'+payload+'.'+sig,\n  ru_url_tg: withUtm(item.ru_url, 'telegram'),\n  en_url_tg: withUtm(item.en_url, 'telegram'),\n  de_url_tg: withUtm(item.de_url, 'telegram'),\n  en_url_li: withUtm(item.en_url, 'linkedin')\n}}];"
       },
       "id": "wf-ghost-jwt",
       "name": "Build Ghost JWT",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1520, 240]
+      "position": [
+        1520,
+        240
+      ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "=${GHOST_API_URL}/ghost/api/admin/posts/?source=html",
+        "url": "={{$env.GHOST_API_URL}}/ghost/api/admin/posts/?source=html",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -184,12 +211,15 @@
       "name": "Publish RU to Ghost",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1740, 240]
+      "position": [
+        1740,
+        240
+      ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "=${GHOST_API_URL}/ghost/api/admin/posts/?source=html",
+        "url": "={{$env.GHOST_API_URL}}/ghost/api/admin/posts/?source=html",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -229,12 +259,15 @@
       "name": "Publish EN to Ghost",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1960, 240]
+      "position": [
+        1960,
+        240
+      ]
     },
     {
       "parameters": {
-        "chatId": "=${TELEGRAM_PUBLIC_CHANNEL}",
-        "text": "={{ '<b>' + $('Build Ghost JWT').first().json.title_ru + '</b>\\n\\nNew article on the blog:\\n RU: ' + $('Build Ghost JWT').first().json.ru_url + '\\n EN: ' + $('Build Ghost JWT').first().json.en_url + '\\n\\n#AI #ClaudeCode' }}",
+        "chatId": "={{$env.TELEGRAM_PUBLIC_CHANNEL}}",
+        "text": "={{ ($('Parse Bilingual Response').first().json.telegram_ru || (\"\\ud83d\\udcdd <b>\" + $('Build Ghost JWT').first().json.title_ru + \"</b>\")) + \"\\n\\n\\ud83c\\uddf7\\ud83c\\uddfa \" + $('Build Ghost JWT').first().json.ru_url_tg + \"\\n\\ud83c\\uddec\\ud83c\\udde7 \" + $('Build Ghost JWT').first().json.en_url_tg + \"\\n\\ud83c\\udde9\\ud83c\\uddea \" + $('Build Ghost JWT').first().json.de_url_tg }}",
         "additionalFields": {
           "parse_mode": "HTML",
           "disable_web_page_preview": false
@@ -244,23 +277,31 @@
       "name": "Telegram Announce (RU)",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
-      "position": [2180, 240],
+      "position": [
+        2180,
+        240
+      ],
       "credentials": {
         "telegramApi": {
-          "id": "${N8N_CRED_TELEGRAM_ID}",
-          "name": "Telegram Bot"
+          "id": "EzJMJSDlKUPFpG4t",
+          "name": "Telegram Mein_erste_bot"
         }
       }
     },
     {
       "parameters": {
-        "jsCode": "const d = $('Build Ghost JWT').first().json;\nconst post = `${d.title_en}\n\nJust published a new deep-dive on the blog.\n\nWhat's inside:\n• Concrete architecture patterns you can ship tomorrow\n• Real code examples\n• FAQ with common questions\n\nRead the full article -> ${d.en_url}\n\nWhat's your take? Comment below.\n\n#AI #EnterpriseAI #ClaudeCode #Automation #B2B #MachineLearning`;\nreturn [{json:{...d, linkedin_text: post}}];"
+        "jsCode": "const prep = $('Prepare Prompts + URLs').first().json;\nconst parsed = $('Parse Bilingual Response').first().json;\nconst li = (parsed.linkedin_text && parsed.linkedin_text.trim().length > 40)\n  ? parsed.linkedin_text.trim()\n  : null;\n\nconst fallback = `${prep.title_de || prep.title_en}\\n\\nDie meisten Unternehmen setzen KI-Systeme noch nach dem alten Muster ein.\\n\\nSie kaufen ein Tool. Schulen ihr Team. Und warten auf Ergebnisse.\\n\\nDas Problem: Ohne Strategie bleibt KI ein teures Experiment.\\n\\nWas wirklich funktioniert:\\n→ Klares Ziel definieren\\n→ Einen Prozess wählen, der messbar ist\\n→ Erst dann automatisieren\\n\\nKI ist kein Ersatz für Strategie. Sie ist ein Verstärker davon.\\n\\n#KI #EnterpriseAI #Automatisierung #DACH #B2B`;\n\nconst post = li || fallback;\nreturn [{json:{...prep, linkedin_text: post}}];"
       },
       "id": "wf-li-rewrite",
-      "name": "LinkedIn Rewrite (EN)",
+      "name": "LinkedIn Rewrite (DE)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2400, 240]
+      "position": [
+        2400,
+        240
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
     },
     {
       "parameters": {
@@ -290,7 +331,7 @@
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({author: $env.LINKEDIN_PERSON_URN, commentary:$json.linkedin_text,visibility:'PUBLIC',distribution:{feedDistribution:'MAIN_FEED',targetEntities:[],thirdPartyDistributionChannels:[]},lifecycleState:'PUBLISHED',isReshareDisabledByAuthor:false}) }}",
+        "body": "={{ JSON.stringify({author: $env.LINKEDIN_PERSON_URN, commentary: $('LinkedIn Rewrite (DE)').first().json.linkedin_text, visibility:'PUBLIC', distribution:{feedDistribution:'MAIN_FEED',targetEntities:[],thirdPartyDistributionChannels:[]}, content:{media:{id: $('LinkedIn Init Upload').first().json.value.image, altText: ($('LinkedIn Rewrite (DE)').first().json.title_de || '')}}, lifecycleState:'PUBLISHED', isReshareDisabledByAuthor:false}) }}",
         "options": {
           "timeout": 60000,
           "response": {
@@ -305,11 +346,16 @@
       "name": "Post to LinkedIn",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2620, 240]
+      "position": [
+        3500,
+        460
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
     },
     {
       "parameters": {
-        "chatId": "=${TELEGRAM_TARGET_CHAT}",
+        "chatId": "={{$env.TELEGRAM_TARGET_CHAT}}",
         "text": "={{ 'G_B_content_gen: queue empty\\n\\nNo topics with status=queued in Supabase. Distiller cron 06:00 found no fresh signals or all topics are already published.\\n\\nDate: ' + new Date().toISOString().split('T')[0] }}",
         "additionalFields": {
           "parse_mode": "HTML"
@@ -319,11 +365,14 @@
       "name": "TG no-topic alert",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
-      "position": [860, 420],
+      "position": [
+        860,
+        420
+      ],
       "credentials": {
         "telegramApi": {
-          "id": "${N8N_CRED_TELEGRAM_ID}",
-          "name": "Telegram Bot"
+          "id": "EzJMJSDlKUPFpG4t",
+          "name": "Telegram Mein_erste_bot"
         }
       }
     },
@@ -338,12 +387,16 @@
       "name": "Webhook content-gen-now",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1.1,
-      "position": [240, 500]
+      "position": [
+        240,
+        500
+      ],
+      "webhookId": "e4db73d2-b20f-4105-ae17-290950089609"
     },
     {
       "parameters": {
         "method": "PATCH",
-        "url": "=${SUPABASE_GENESIS_URL}/rest/v1/topics?id=eq.{{ $('Prepare Prompts + URLs').first().json.topic_id }}",
+        "url": "={{$env.SUPABASE_GENESIS_URL}}/rest/v1/topics?id=eq.{{ $('Prepare Prompts + URLs').first().json.topic_id }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
@@ -370,17 +423,20 @@
       "name": "Mark topic published",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [3300, 500],
+      "position": [
+        3300,
+        500
+      ],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "${N8N_CRED_SUPABASE_ID}",
-          "name": "supabase_genesis"
+          "id": "z9KfDddxStUBbK3E",
+          "name": "Supabase Genesis apikey (fixed 2026-05-24)"
         }
       }
     },
     {
       "parameters": {
-        "chatId": "=${TELEGRAM_TARGET_CHAT}",
+        "chatId": "={{$env.TELEGRAM_TARGET_CHAT}}",
         "text": "={{ 'G_B_content_gen published\\n\\nTitle: ' + $('Prepare Prompts + URLs').first().json.title_ru + '\\n RU: ' + $('Prepare Prompts + URLs').first().json.ru_url + '\\n EN: ' + $('Prepare Prompts + URLs').first().json.en_url + '\\nLinkedIn: posted\\nTelegram channel: posted\\n\\nhype_score: ' + $('Prepare Prompts + URLs').first().json.hype_score + '\\ntopic_id: ' + $('Prepare Prompts + URLs').first().json.topic_id }}",
         "additionalFields": {
           "parse_mode": "HTML",
@@ -391,65 +447,528 @@
       "name": "TG result",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
-      "position": [3520, 500],
+      "position": [
+        3520,
+        500
+      ],
       "credentials": {
         "telegramApi": {
-          "id": "${N8N_CRED_TELEGRAM_ID}",
-          "name": "Telegram Bot"
+          "id": "EzJMJSDlKUPFpG4t",
+          "name": "Telegram Mein_erste_bot"
         }
       }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.GHOST_API_URL}}/ghost/api/admin/posts/?source=html",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Ghost {{ $('Build Ghost JWT').first().json.ghost_jwt }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "User-Agent",
+              "value": "n8n-blog-autopilot/0.2"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({posts:[{title: $('Build Ghost JWT').first().json.title_de, html: $('Build Ghost JWT').first().json.html_de, slug: $('Build Ghost JWT').first().json.slug_de, status: 'published', meta_title: $('Build Ghost JWT').first().json.title_de, meta_description: $('Build Ghost JWT').first().json.title_de, locale: 'de'}]}) }}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "wf-ghost-de",
+      "name": "Publish DE to Ghost",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2180,
+        380
+      ]
+    },
+    {
+      "id": "trigger-rebuild",
+      "name": "Trigger blog rebuild",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3540,
+        500
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://gerdennisai.com/_rebuild",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Rebuild-Secret",
+              "value": "c4ceed2b64c7e673cc09c8037637b5dde2db6ed926db75b5"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({slug: $json.slug || \"unknown\", trigger: \"g_b_content_gen\"}) }}",
+        "options": {
+          "timeout": 15000
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SUPABASE_GENESIS_URL}}/rest/v1/posts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify((()=>{const d=$('Build Ghost JWT').first().json;const tid=$('Prepare Prompts + URLs').first().json.topic_id;const utm=d.slug_en;const now=new Date().toISOString();return [{topic_id:tid,platform:'ghost_ru',lang:'ru',title:d.title_ru,slug:d.slug_ru,external_url:d.ru_url,utm_campaign:utm,status:'published',published_at:now},{topic_id:tid,platform:'ghost_en',lang:'en',title:d.title_en,slug:d.slug_en,external_url:d.en_url,utm_campaign:utm,status:'published',published_at:now},{topic_id:tid,platform:'ghost_de',lang:'de',title:d.title_de,slug:d.slug_de,external_url:d.de_url,utm_campaign:utm,status:'published',published_at:now},{topic_id:tid,platform:'telegram',lang:'ru',title:d.title_ru,slug:d.slug_ru,external_url:d.ru_url_tg,utm_campaign:utm,status:'published',published_at:now},{topic_id:tid,platform:'linkedin',lang:'en',title:d.title_en,slug:d.slug_en,external_url:d.en_url_li,utm_campaign:utm,status:'published',published_at:now}];})()) }}",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "mirror-posts",
+      "name": "Mirror to posts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3300,
+        720
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "z9KfDddxStUBbK3E",
+          "name": "Supabase Genesis apikey (fixed 2026-05-24)"
+        }
+      }
+    },
+    {
+      "id": "fal-generate-image-001",
+      "name": "fal.ai Generate Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2620,
+        460
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://fal.run/fal-ai/flux/schnell",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Key 7e4cd19d-904c-43a0-b0c8-93a85cbe63de:079acc13ecff398053cc63fe3628dfce"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({prompt: 'Professional enterprise AI visualization, dark blue gradient, glowing neural network, corporate DACH B2B, topic: ' + ($('LinkedIn Rewrite (DE)').first().json.title_de || $('LinkedIn Rewrite (DE)').first().json.title_en || 'KI Automatisierung') + ', photorealistic, 16:9, no text, no watermark', image_size: 'landscape_16_9', num_inference_steps: 4, num_images: 1}) }}",
+        "options": {
+          "timeout": 90000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "authentication": "none"
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "id": "linkedin-init-upload-001",
+      "name": "LinkedIn Init Upload",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2840,
+        460
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.linkedin.com/v2/images?action=initializeUpload",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.LINKEDIN_TOKEN }}"
+            },
+            {
+              "name": "LinkedIn-Version",
+              "value": "202503"
+            },
+            {
+              "name": "X-Restli-Protocol-Version",
+              "value": "2.0.0"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({initializeUploadRequest: {owner: $env.LINKEDIN_PERSON_URN}}) }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "id": "download-fal-image-001",
+      "name": "Download fal Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3060,
+        460
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('fal.ai Generate Image').first().json.images[0].url }}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "id": "linkedin-upload-binary-001",
+      "name": "LinkedIn Upload Binary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3280,
+        460
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $('LinkedIn Init Upload').first().json.value.uploadUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "image/jpeg"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
     }
   ],
   "connections": {
     "Prepare Prompts + URLs": {
-      "main": [[{ "node": "GPT-4.1 Write Bilingual", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "GPT-4.1 Write Bilingual",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "GPT-4.1 Write Bilingual": {
-      "main": [[{ "node": "Parse Bilingual Response", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Parse Bilingual Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Parse Bilingual Response": {
-      "main": [[{ "node": "Build Ghost JWT", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Build Ghost JWT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Build Ghost JWT": {
-      "main": [[{ "node": "Publish RU to Ghost", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Publish RU to Ghost",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Publish RU to Ghost": {
-      "main": [[{ "node": "Publish EN to Ghost", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Publish EN to Ghost",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Publish EN to Ghost": {
-      "main": [[{ "node": "Telegram Announce (RU)", "type": "main", "index": 0 }]]
-    },
-    "Telegram Announce (RU)": {
-      "main": [[{ "node": "LinkedIn Rewrite (EN)", "type": "main", "index": 0 }]]
-    },
-    "LinkedIn Rewrite (EN)": {
-      "main": [[{ "node": "Post to LinkedIn", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Publish DE to Ghost",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Webhook content-gen-now": {
-      "main": [[{ "node": "GET Supabase queued topic", "type": "main", "index": 0 }]]
-    },
-    "Daily 09:30 Berlin": {
-      "main": [[{ "node": "GET Supabase queued topic", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "GET Supabase queued topic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "GET Supabase queued topic": {
-      "main": [[{ "node": "Has Supabase topic?", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Has Supabase topic?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Has Supabase topic?": {
       "main": [
-        [{ "node": "Prepare Prompts + URLs", "type": "main", "index": 0 }],
-        [{ "node": "TG no-topic alert", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Prepare Prompts + URLs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "TG no-topic alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Post to LinkedIn": {
-      "main": [[{ "node": "Mark topic published", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Mark topic published",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Mark topic published": {
-      "main": [[{ "node": "TG result", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "TG result",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Trigger blog rebuild",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Mirror to posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish DE to Ghost": {
+      "main": [
+        [
+          {
+            "node": "Telegram Announce (RU)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily 08:30 Berlin": {
+      "main": [
+        [
+          {
+            "node": "GET Supabase queued topic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Announce (RU)": {
+      "main": [
+        [
+          {
+            "node": "LinkedIn Rewrite (DE)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LinkedIn Rewrite (DE)": {
+      "main": [
+        [
+          {
+            "node": "fal.ai Generate Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "fal.ai Generate Image": {
+      "main": [
+        [
+          {
+            "node": "LinkedIn Init Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LinkedIn Init Upload": {
+      "main": [
+        [
+          {
+            "node": "Download fal Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download fal Image": {
+      "main": [
+        [
+          {
+            "node": "LinkedIn Upload Binary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LinkedIn Upload Binary": {
+      "main": [
+        [
+          {
+            "node": "Post to LinkedIn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
-    "executionOrder": "v1",
-    "callerPolicy": "workflowsFromSameOwner",
-    "availableInMCP": false
+    "executionOrder": "v1"
   }
 }
