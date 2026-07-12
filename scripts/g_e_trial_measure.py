@@ -122,6 +122,15 @@ MODULE_METRIC = {
     # content_factory_* пока с тонкими данными → мерить нечего, вернём insufficient_data
 }
 
+# Модули с ЗАМКНУТЫМ циклом: генератор тянет промпт с GitHub main в рантайме,
+# значит merge реально доезжает до прода и метрику ПОСЛЕ можно приписать правке.
+# Остальные держат промпт inline (см. AUDIT #1) — правка в прод не попадает,
+# поэтому мерить их = мерить шум. Для них вердикт 'loop_open', без отката.
+LOOP_CLOSED = {"topic_distiller"}
+
+ENGAGEMENT_CRATER = float(os.environ.get("ENGAGEMENT_CRATER", "0.40"))  # >40% падения eng → флаг
+COOLDOWN_DAYS = int(os.environ.get("TRIAL_COOLDOWN_DAYS", "14"))        # не дёргать модуль после отката
+
 
 # ============== Supabase ==============
 
@@ -185,15 +194,17 @@ def latest_value_per_post(snapshots: list[dict]) -> dict[str, float]:
     return {pid: v for pid, (_, v) in best.items()}
 
 
-def window_average(post_ids: list[str],
-                   published_at: dict[str, datetime],
-                   latest_metric: dict[str, float],
-                   start: datetime, end: datetime,
-                   min_age: timedelta, now: datetime) -> tuple[float, int]:
-    """Средняя зрелая метрика постов, опубликованных в [start, end)
-    и достаточно старых (now - published ≥ min_age).
-    Возвращает (avg, n). avg=0.0 при n=0."""
-    vals = []
+def _median(vals: list[float]) -> float:
+    if not vals:
+        return 0.0
+    s = sorted(vals)
+    n = len(s)
+    mid = n // 2
+    return s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2
+
+
+def _mature_ids(post_ids, published_at, latest_metric, start, end, min_age, now):
+    out = []
     for pid in post_ids:
         pub = published_at.get(pid)
         if pub is None or pid not in latest_metric:
@@ -202,10 +213,27 @@ def window_average(post_ids: list[str],
             continue
         if (now - pub) < min_age:
             continue  # слишком свежий — метрика ещё не вызрела
-        vals.append(latest_metric[pid])
+        out.append(pid)
+    return out
+
+
+def window_stats(post_ids, published_at, latest_metric,
+                 start, end, min_age, now) -> dict:
+    """Статистика зрелых постов окна [start,end): mean, median, n.
+    Медиана — устойчива к вирусным выбросам (один залетевший ролик не
+    красит провальную неделю)."""
+    ids = _mature_ids(post_ids, published_at, latest_metric, start, end, min_age, now)
+    vals = [latest_metric[p] for p in ids]
     if not vals:
-        return 0.0, 0
-    return sum(vals) / len(vals), len(vals)
+        return {"mean": 0.0, "median": 0.0, "n": 0}
+    return {"mean": sum(vals) / len(vals), "median": _median(vals), "n": len(vals)}
+
+
+def window_average(post_ids, published_at, latest_metric,
+                   start, end, min_age, now) -> tuple[float, int]:
+    """Обёртка над window_stats — (mean, n). Оставлена для совместимости."""
+    st = window_stats(post_ids, published_at, latest_metric, start, end, min_age, now)
+    return st["mean"], st["n"]
 
 
 def decide_verdict(before: float, n_before: int, after: float, n_after: int,
@@ -256,6 +284,8 @@ def fetch_trial_versions(module_filter: Optional[str]) -> list[dict]:
     out = []
     for r in rows:
         ab = r.get("approved_by") or ""
+        if ab.startswith("auto:rollback"):
+            continue  # анти-thrash: восстановленный откатом baseline не судим заново
         if not (ab.startswith("github:") or ab.startswith("auto")):
             continue  # активировано Денисом руками — не машинное испытание
         if not r.get("activated_at"):
@@ -356,15 +386,22 @@ def perform_rollback(trial: dict, parent: dict, measure: dict, verdict: dict) ->
             r = gh("pr", "create", "--title", title, "--body", body,
                    "--base", "main", "--head", branch, check=False)
             pr_url = (r.stdout.strip().splitlines() or [None])[-1] if r.stdout.strip() else None
+            merged = False
             if pr_url and verdict.get("severe"):
                 mr = gh("pr", "merge", pr_url, "--squash", "--delete-branch", check=False)
-                print(f"    [rollback] PR {pr_url} — {'✓ MERGED (severe)' if mr.returncode == 0 else 'merge FAILED: ' + mr.stderr[:100]}")
+                merged = mr.returncode == 0
+                print(f"    [rollback] PR {pr_url} — {'✓ MERGED (severe)' if merged else 'merge FAILED: ' + mr.stderr[:100]}")
             elif pr_url:
-                print(f"    [rollback] PR открыт (не severe, оставлен на ревью): {pr_url}")
-            _swap_prompts_table(trial, parent, measure, verdict)
+                print(f"    [rollback] PR открыт (не severe, оставлен на ревью Дениса): {pr_url}")
+            # Прод замкнутого модуля = .md на main. Таблицу двигаем ТОЛЬКО когда
+            # реверт реально смержен — иначе БД и прод разойдутся. Мягкий откат =
+            # PR ждёт ревью, прод и таблица не меняются.
+            if merged:
+                _swap_prompts_table(trial, parent, measure, verdict)
             return pr_url
         finally:
             git("checkout", prev or "main", check=False)
+    # ветка без git-файла (чистый DB-модуль): git-гейта нет, swap как есть
     _swap_prompts_table(trial, parent, measure, verdict)
     return None
 
@@ -411,6 +448,15 @@ def _bump_patch(version: str) -> str:
 
 # ============== per-trial pipeline ==============
 
+def _engagement_per_post(likes, comments, views) -> dict[str, float]:
+    """(like+comment)/view на каждый пост — качество вовлечения, не только охват."""
+    out = {}
+    for pid, v in views.items():
+        if v and v > 0:
+            out[pid] = (likes.get(pid, 0) + comments.get(pid, 0)) / v
+    return out
+
+
 def measure_trial(trial: dict) -> dict:
     module = trial["module"]
     mm = MODULE_METRIC.get(module)
@@ -424,21 +470,52 @@ def measure_trial(trial: dict) -> dict:
                             "reason": f"no metric mapping for module {module}"},
                 "trial_age_days": trial_age_days}
 
+    # loop-гард (вывод №1): по разомкнутым модулям правка в прод не доезжает →
+    # мерить нельзя, вердикт был бы шумом. Не мерим, не откатываем.
+    if module not in LOOP_CLOSED:
+        return {"trial": trial,
+                "measure": {"platform": mm[0], "metric": mm[1], "loop": "open"},
+                "verdict": {"verdict": "loop_open", "severe": False, "change_pct": None,
+                            "reason": f"{module}: генератор держит промпт inline — merge не "
+                                      f"доезжает до прода, мерить нечего (см. AUDIT #1)"},
+                "trial_age_days": trial_age_days}
+
     platform, metric = mm
     published = fetch_platform_posts(platform)
     post_ids = list(published.keys())
-    snaps = fetch_metric_snapshots(platform, metric, post_ids)
-    latest = latest_value_per_post(snaps)
-
     W = timedelta(days=TRIAL_WINDOW_DAYS)
     min_age = timedelta(days=POST_MIN_AGE_DAYS)
-    before, n_before = window_average(post_ids, published, latest, T - W, T, min_age, now)
-    after, n_after = window_average(post_ids, published, latest, T, now, min_age, now)
 
-    verdict = decide_verdict(before, n_before, after, n_after, trial_age_days)
-    measure = {"platform": platform, "metric": metric, "before": before, "after": after,
-               "n_before": n_before, "n_after": n_after,
-               "window_days": TRIAL_WINDOW_DAYS, "post_min_age_days": POST_MIN_AGE_DAYS}
+    # первичный сигнал: медиана метрики (робастна к вирусным выбросам)
+    views = latest_value_per_post(fetch_metric_snapshots(platform, metric, post_ids))
+    b = window_stats(post_ids, published, views, T - W, T, min_age, now)
+    a = window_stats(post_ids, published, views, T, now, min_age, now)
+    verdict = decide_verdict(b["median"], b["n"], a["median"], a["n"], trial_age_days)
+
+    # вторичный сигнал: engagement (like+comment)/view — не «просмотры любой ценой»
+    eng_change = None
+    if platform == "youtube":
+        likes = latest_value_per_post(fetch_metric_snapshots(platform, "like", post_ids))
+        comments = latest_value_per_post(fetch_metric_snapshots(platform, "comment", post_ids))
+        eng = _engagement_per_post(likes, comments, views)
+        eb = window_stats(post_ids, published, eng, T - W, T, min_age, now)
+        ea = window_stats(post_ids, published, eng, T, now, min_age, now)
+        if eb["median"] > 0 and eb["n"] >= MIN_SAMPLE and ea["n"] >= MIN_SAMPLE:
+            eng_change = (ea["median"] - eb["median"]) / eb["median"]
+            # если охват «вырос», но вовлечённость обвалилась — это не победа
+            if verdict["verdict"] == "kept" and eng_change <= -ENGAGEMENT_CRATER:
+                verdict = {"verdict": "kept_watch", "severe": False,
+                           "change_pct": verdict["change_pct"],
+                           "reason": verdict["reason"] +
+                                     f" — НО engagement {eng_change*100:+.0f}% (обвал) → под наблюдением"}
+
+    measure = {"platform": platform, "metric": metric, "loop": "closed",
+               "before": b["median"], "after": a["median"],
+               "before_mean": round(b["mean"], 1), "after_mean": round(a["mean"], 1),
+               "n_before": b["n"], "n_after": a["n"],
+               "engagement_change_pct": None if eng_change is None else round(eng_change * 100, 1),
+               "window_days": TRIAL_WINDOW_DAYS, "post_min_age_days": POST_MIN_AGE_DAYS,
+               "stat": "median"}
     return {"trial": trial, "measure": measure, "verdict": verdict, "trial_age_days": trial_age_days}
 
 
@@ -459,7 +536,7 @@ def persist_verdict(trial: dict, result: dict, insight: Optional[dict]):
     })
 
 
-TERMINAL_VERDICTS = {"kept", "rolled_back", "kept_low_data", "insufficient_data"}
+TERMINAL_VERDICTS = {"kept", "rolled_back", "kept_low_data", "insufficient_data", "loop_open"}
 
 
 def main():
@@ -493,9 +570,11 @@ def main():
         m = result["measure"]
         line = (f"  {t['module']} v{t['version']} (baseline v{t['parent_version']}, "
                 f"age {result['trial_age_days']:.0f}d) → {v['verdict'].upper()}")
-        if m:
-            line += (f" | {m['metric']} after={m['after']:.0f}(n{m['n_after']}) "
+        if m and "after" in m:
+            line += (f" | {m['metric']} (median) after={m['after']:.0f}(n{m['n_after']}) "
                      f"before={m['before']:.0f}(n{m['n_before']})")
+            if m.get("engagement_change_pct") is not None:
+                line += f" · eng {m['engagement_change_pct']:+.0f}%"
         print(line)
         print(f"     reason: {v['reason']}")
 
@@ -511,13 +590,17 @@ def main():
 
         parent = fetch_parent_row(t["module"], t["parent_version"])
         if v["verdict"] == "rolled_back":
-            if args.apply:
-                if not parent:
-                    print("     [rollback] baseline row не найден — пропуск")
-                else:
-                    perform_rollback(t, parent, m, v)
+            applied = False
+            if args.apply and parent:
+                perform_rollback(t, parent, m, v)
+                applied = True
+            elif args.apply and not parent:
+                print("     [rollback] baseline row не найден — пропуск")
             else:
-                print("     [rollback] помечено, но --apply не задан → откат НЕ выполнен")
+                print("     [rollback] измерено, но --apply не задан → откат НЕ выполнен")
+            # не терминалим, пока откат реально не выполнен — иначе cron пропустит
+            if not applied:
+                v["verdict"] = "rollback_pending"
 
         persist_verdict(t, result, insight)
 

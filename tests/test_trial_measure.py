@@ -13,7 +13,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from g_e_trial_measure import (  # noqa: E402
     decide_verdict,
     window_average,
+    window_stats,
     latest_value_per_post,
+    _median,
+    _engagement_per_post,
     _bump_patch,
 )
 
@@ -124,6 +127,46 @@ def test_latest_value_picks_newest_snapshot():
     ]
     out = latest_value_per_post(snaps)
     assert out == {"a": 55.0, "b": 7.0}
+
+
+# ---------- median robustness ----------
+
+def test_median_basic():
+    assert _median([10, 20, 30]) == 20
+    assert _median([10, 20, 30, 40]) == 25
+    assert _median([]) == 0.0
+
+
+def test_median_resists_viral_outlier():
+    # один залетевший ролик (100000) не должен красить провальную неделю
+    normal = [50, 60, 55, 70]
+    viral = normal + [100000]
+    assert _median(viral) <= 70          # медиана держится
+    assert sum(viral) / len(viral) > 1000  # среднее — искажено
+
+
+def test_window_stats_reports_mean_median_n():
+    now = datetime(2026, 7, 1, tzinfo=UTC)
+    published = {"a": now - timedelta(days=15), "b": now - timedelta(days=12),
+                 "c": now - timedelta(days=10)}
+    latest = {"a": 100, "b": 200, "c": 9000}  # c — выброс
+    st = window_stats(list(published), published, latest,
+                      now - timedelta(days=21), now, timedelta(days=7), now)
+    assert st["n"] == 3
+    assert st["median"] == 200            # устойчива
+    assert st["mean"] > 3000              # среднее искажено выбросом
+
+
+# ---------- engagement ----------
+
+def test_engagement_ratio():
+    likes = {"a": 10, "b": 0}
+    comments = {"a": 5, "b": 0}
+    views = {"a": 300, "b": 100, "c": 0}
+    eng = _engagement_per_post(likes, comments, views)
+    assert eng["a"] == (10 + 5) / 300
+    assert eng["b"] == 0.0
+    assert "c" not in eng  # деление на ноль просмотров исключено
 
 
 # ---------- version bump ----------
