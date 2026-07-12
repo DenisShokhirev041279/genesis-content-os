@@ -138,6 +138,7 @@ def main():
             "pending": ("measuring…", "#8b96b0"),
             "kept_low_data": ("kept (low data)", "#8b96b0"),
             "insufficient_data": ("no metric", "#8b96b0"),
+            "insufficient_baseline": ("no baseline yet", "#8b96b0"),
             "loop_open": ("inline — not measured", "#8b96b0"),
         }
         label, col = vmap.get(e["verdict"], ("measuring…", "#8b96b0"))

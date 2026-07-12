@@ -14,6 +14,7 @@ from g_e_trial_measure import (  # noqa: E402
     decide_verdict,
     window_average,
     window_stats,
+    version_windows,
     latest_value_per_post,
     _median,
     _engagement_per_post,
@@ -127,6 +128,37 @@ def test_latest_value_picks_newest_snapshot():
     ]
     out = latest_value_per_post(snaps)
     assert out == {"a": 55.0, "b": 7.0}
+
+
+# ---------- version_windows (точечная атрибуция по границам версий) ----------
+
+def test_version_windows_sequential():
+    now = datetime(2026, 7, 1, tzinfo=UTC)
+    # V активна с 06-01, baseline P активна была с 05-01 до 06-01, closure старый
+    before, after = version_windows("2026-06-01T00:00:00+00:00",
+                                    "2026-05-01T00:00:00+00:00", None, now)
+    assert before == (datetime(2026, 5, 1, tzinfo=UTC), datetime(2026, 6, 1, tzinfo=UTC))
+    assert after == (datetime(2026, 6, 1, tzinfo=UTC), now)
+
+
+def test_version_windows_pre_closure_baseline_empty():
+    now = datetime(2026, 7, 20, tzinfo=UTC)
+    # V активна с 06-22, но цикл замкнут только 07-12 → baseline-окно ∩ closed-era пустое
+    before, after = version_windows("2026-06-22T00:00:00+00:00",
+                                    "2026-04-24T00:00:00+00:00",
+                                    "2026-07-12T00:00:00+00:00", now)
+    # before: max(04-24, 07-12)=07-12 .. до 06-22 → start > end → пустое окно
+    assert before[0] > before[1]
+    # after: max(06-22, 07-12)=07-12 .. now → валидное
+    assert after == (datetime(2026, 7, 12, tzinfo=UTC), now)
+
+
+def test_version_windows_no_parent_activated():
+    now = datetime(2026, 7, 1, tzinfo=UTC)
+    before, after = version_windows("2026-06-01T00:00:00+00:00", None, None, now)
+    # parent без activated_at → epoch; before = [epoch, 06-01)
+    assert before[1] == datetime(2026, 6, 1, tzinfo=UTC)
+    assert before[0].year == 2000
 
 
 # ---------- median robustness ----------

@@ -242,6 +242,27 @@ def window_average(post_ids, published_at, latest_metric,
     return st["mean"], st["n"]
 
 
+_EPOCH = datetime(2000, 1, 1, tzinfo=timezone.utc)
+
+
+def version_windows(v_activated: str, parent_activated: Optional[str],
+                    closure: Optional[str], now: datetime):
+    """Окна атрибуции по РЕАЛЬНЫМ границам активности версий (не фикс-окно).
+
+    before = пока была активна baseline-версия P: [P.activated, V.activated).
+    after  = пока активна испытуемая V:            [V.activated, now).
+    Оба пересекаются с closed-era (>= closure) — до замыкания цикла правка
+    промпта в прод не доезжала, такие посты в атрибуцию не берём.
+    Возвращает (before_start, before_end), (after_start, after_end).
+    """
+    v_act = _parse_ts(v_activated)
+    p_act = _parse_ts(parent_activated) if parent_activated else _EPOCH
+    clo = _parse_ts(closure) if closure else _EPOCH
+    before = (max(p_act, clo), v_act)     # P активна до активации V
+    after = (max(v_act, clo), now)        # V активна с активации до сейчас
+    return before, after
+
+
 def decide_verdict(before: float, n_before: int, after: float, n_after: int,
                    trial_age_days: float,
                    min_sample: int = MIN_SAMPLE,
@@ -304,7 +325,7 @@ def fetch_trial_versions(module_filter: Optional[str]) -> list[dict]:
 
 def fetch_parent_row(module: str, parent_version: str) -> Optional[dict]:
     rows = sb_get("prompts", {
-        "select": "id,module,version,body",
+        "select": "id,module,version,body,activated_at",
         "module": f"eq.{module}",
         "version": f"eq.{parent_version}",
         "limit": "1",
@@ -476,32 +497,33 @@ def measure_trial(trial: dict) -> dict:
                             "reason": f"no metric mapping for module {module}"},
                 "trial_age_days": trial_age_days}
 
-    # loop-гард (вывод №1): по разомкнутым модулям правка в прод не доезжает →
-    # мерить нельзя, вердикт был бы шумом. Не мерим, не откатываем.
-    # Плюс: версии, активированные ДО замыкания цикла, тоже loop_open (правка
-    # тогда ещё не доезжала в прод — мерить их некорректно).
-    closed_since = LOOP_CLOSED.get(module, "__absent__")
-    pre_closure = (closed_since not in (None, "__absent__")
-                   and trial["activated_at"] < closed_since)
-    if module not in LOOP_CLOSED or pre_closure:
-        why = ("активирована до замыкания цикла" if pre_closure
-               else "генератор держит промпт inline — merge не доезжает до прода")
+    # loop-гард (вывод №1): по РАЗОМКНУТЫМ модулям правка в прод не доезжает →
+    # мерить нельзя. Pre-closure версии сами дадут insufficient_baseline ниже
+    # (их baseline-окно ∩ closed-era пустое) — отдельная ветка не нужна.
+    if module not in LOOP_CLOSED:
         return {"trial": trial,
                 "measure": {"platform": mm[0], "metric": mm[1], "loop": "open"},
                 "verdict": {"verdict": "loop_open", "severe": False, "change_pct": None,
-                            "reason": f"{module}: {why} (см. AUDIT #1)"},
+                            "reason": f"{module}: генератор держит промпт inline — "
+                                      f"merge не доезжает до прода (см. AUDIT #1)"},
                 "trial_age_days": trial_age_days}
 
     platform, metric = mm
+    # Точечная атрибуция по РЕАЛЬНЫМ окнам активности версий ∩ closed-era
+    # (не фикс-окно ±N дней): каждый пост принадлежит версии, активной в момент
+    # его публикации. Причинно-корректно для последовательных версий модуля.
+    parent = fetch_parent_row(module, trial["parent_version"])
+    closure = LOOP_CLOSED.get(module)
+    (b_start, b_end), (a_start, a_end) = version_windows(
+        trial["activated_at"], (parent or {}).get("activated_at"), closure, now)
     published = fetch_platform_posts(platform)
     post_ids = list(published.keys())
-    W = timedelta(days=TRIAL_WINDOW_DAYS)
     min_age = timedelta(days=POST_MIN_AGE_DAYS)
 
     # первичный сигнал: медиана метрики (робастна к вирусным выбросам)
     views = latest_value_per_post(fetch_metric_snapshots(platform, metric, post_ids))
-    b = window_stats(post_ids, published, views, T - W, T, min_age, now)
-    a = window_stats(post_ids, published, views, T, now, min_age, now)
+    b = window_stats(post_ids, published, views, b_start, b_end, min_age, now)
+    a = window_stats(post_ids, published, views, a_start, a_end, min_age, now)
     verdict = decide_verdict(b["median"], b["n"], a["median"], a["n"], trial_age_days)
 
     # вторичный сигнал: engagement (like+comment)/view — не «просмотры любой ценой»
@@ -510,8 +532,8 @@ def measure_trial(trial: dict) -> dict:
         likes = latest_value_per_post(fetch_metric_snapshots(platform, "like", post_ids))
         comments = latest_value_per_post(fetch_metric_snapshots(platform, "comment", post_ids))
         eng = _engagement_per_post(likes, comments, views)
-        eb = window_stats(post_ids, published, eng, T - W, T, min_age, now)
-        ea = window_stats(post_ids, published, eng, T, now, min_age, now)
+        eb = window_stats(post_ids, published, eng, b_start, b_end, min_age, now)
+        ea = window_stats(post_ids, published, eng, a_start, a_end, min_age, now)
         if eb["median"] > 0 and eb["n"] >= MIN_SAMPLE and ea["n"] >= MIN_SAMPLE:
             eng_change = (ea["median"] - eb["median"]) / eb["median"]
             # если охват «вырос», но вовлечённость обвалилась — это не победа
@@ -526,8 +548,10 @@ def measure_trial(trial: dict) -> dict:
                "before_mean": round(b["mean"], 1), "after_mean": round(a["mean"], 1),
                "n_before": b["n"], "n_after": a["n"],
                "engagement_change_pct": None if eng_change is None else round(eng_change * 100, 1),
-               "window_days": TRIAL_WINDOW_DAYS, "post_min_age_days": POST_MIN_AGE_DAYS,
-               "stat": "median"}
+               "attribution": "version-activation-windows",
+               "before_window": [b_start.isoformat(), b_end.isoformat()],
+               "after_window": [a_start.isoformat(), a_end.isoformat()],
+               "post_min_age_days": POST_MIN_AGE_DAYS, "stat": "median"}
     return {"trial": trial, "measure": measure, "verdict": verdict, "trial_age_days": trial_age_days}
 
 
