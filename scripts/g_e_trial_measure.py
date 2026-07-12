@@ -126,7 +126,13 @@ MODULE_METRIC = {
 # значит merge реально доезжает до прода и метрику ПОСЛЕ можно приписать правке.
 # Остальные держат промпт inline (см. AUDIT #1) — правка в прод не попадает,
 # поэтому мерить их = мерить шум. Для них вердикт 'loop_open', без отката.
-LOOP_CLOSED = {"topic_distiller"}
+#
+# Значение = дата замыкания (ISO) или None (замкнут всегда). Версии, активированные
+# ДО замыкания, мерить нельзя (тогда правка ещё не доезжала в прод) → loop_open.
+LOOP_CLOSED = {
+    "topic_distiller": None,          # с рождения тянет .md с GitHub raw
+    "scenario_v2": "2026-07-12T00:00:00+00:00",  # цикл замкнут 12.07 (YT Pilot fetch)
+}
 
 ENGAGEMENT_CRATER = float(os.environ.get("ENGAGEMENT_CRATER", "0.40"))  # >40% падения eng → флаг
 COOLDOWN_DAYS = int(os.environ.get("TRIAL_COOLDOWN_DAYS", "14"))        # не дёргать модуль после отката
@@ -472,12 +478,18 @@ def measure_trial(trial: dict) -> dict:
 
     # loop-гард (вывод №1): по разомкнутым модулям правка в прод не доезжает →
     # мерить нельзя, вердикт был бы шумом. Не мерим, не откатываем.
-    if module not in LOOP_CLOSED:
+    # Плюс: версии, активированные ДО замыкания цикла, тоже loop_open (правка
+    # тогда ещё не доезжала в прод — мерить их некорректно).
+    closed_since = LOOP_CLOSED.get(module, "__absent__")
+    pre_closure = (closed_since not in (None, "__absent__")
+                   and trial["activated_at"] < closed_since)
+    if module not in LOOP_CLOSED or pre_closure:
+        why = ("активирована до замыкания цикла" if pre_closure
+               else "генератор держит промпт inline — merge не доезжает до прода")
         return {"trial": trial,
                 "measure": {"platform": mm[0], "metric": mm[1], "loop": "open"},
                 "verdict": {"verdict": "loop_open", "severe": False, "change_pct": None,
-                            "reason": f"{module}: генератор держит промпт inline — merge не "
-                                      f"доезжает до прода, мерить нечего (см. AUDIT #1)"},
+                            "reason": f"{module}: {why} (см. AUDIT #1)"},
                 "trial_age_days": trial_age_days}
 
     platform, metric = mm

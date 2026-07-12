@@ -1,9 +1,5 @@
 {
-  "_meta": {
-    "notes": "All credentials replaced with ${ENV_VAR} placeholders. Configure via Doppler or .env. Original had hardcoded Telegram bot token, Telegram channel chat_id, receiver secret, ngrok URL, Supabase URL, Telegram chat ID, public TG channel handle, AUTHOR identity strings — all replaced. Replace n8n credential IDs with your own after import."
-  },
   "name": "YT Shorts Pilot v0.4 (full autonomy: GPT scenario -> render -> publish)",
-  "active": false,
   "nodes": [
     {
       "parameters": {
@@ -15,8 +11,8 @@
             }
           ]
         },
-        "triggerAtStartup": false,
-        "timezone": "Europe/Berlin"
+        "timezone": "Europe/Berlin",
+        "triggerAtStartup": false
       },
       "id": "cron-0900-daily",
       "name": "Schedule 09:00 Berlin daily",
@@ -31,7 +27,6 @@
       "parameters": {
         "httpMethod": "POST",
         "path": "yt-pilot-v04-now",
-        "responseMode": "lastNode",
         "options": {}
       },
       "id": "webhook-manual-v04",
@@ -46,16 +41,49 @@
     },
     {
       "parameters": {
-        "method": "GET",
-        "url": "=${SUPABASE_GENESIS_URL}/rest/v1/topics?status=eq.queued&order=hype_score.desc.nullslast&limit=1&select=id,title_ru,slug_en,topic_category,notes,hype_score",
+        "method": "PATCH",
+        "url": "={{$env.SUPABASE_GENESIS_URL}}/rest/v1/topics",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "eq.queued"
+            },
+            {
+              "name": "order",
+              "value": "priority.desc.nullslast,hype_score.desc.nullslast,discovered_at.asc"
+            },
+            {
+              "name": "limit",
+              "value": "1"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"status\":\"drafting\"}",
         "options": {
           "timeout": 15000
         }
       },
       "id": "supabase-topic",
-      "name": "Supabase: select topic queued",
+      "name": "Supabase: claim_next_topic (L1 atomic)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -64,8 +92,8 @@
       ],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "${N8N_CRED_SUPABASE_ID}",
-          "name": "supabase_genesis"
+          "id": "z9KfDddxStUBbK3E",
+          "name": "Supabase Genesis apikey (fixed 2026-05-24)"
         }
       }
     },
@@ -102,7 +130,8 @@
             }
           ],
           "combinator": "and"
-        }
+        },
+        "options": {}
       },
       "id": "if-no-topic",
       "name": "No topic in queue?",
@@ -115,7 +144,7 @@
     },
     {
       "parameters": {
-        "chatId": "=${TELEGRAM_TARGET_CHAT}",
+        "chatId": "={{$env.TELEGRAM_TARGET_CHAT}}",
         "text": "={{ 'YT Pilot v0.4: no queued topics for ' + $json.today + '. Module A (G_A_topic_distiller) should have populated the queue — check.' }}",
         "additionalFields": {
           "parse_mode": "HTML"
@@ -129,13 +158,13 @@
         1120,
         250
       ],
+      "webhookId": "v04-no-topic",
       "credentials": {
         "telegramApi": {
-          "id": "${N8N_CRED_TELEGRAM_ID}",
-          "name": "Telegram Bot"
+          "id": "EzJMJSDlKUPFpG4t",
+          "name": "Telegram Mein_erste_bot"
         }
-      },
-      "webhookId": "v04-no-topic"
+      }
     },
     {
       "parameters": {
@@ -154,7 +183,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  model: 'gpt-4o',\n  temperature: 0.7,\n  max_tokens: 4000,\n  response_format: {type: 'json_object'},\n  messages: [\n    {role: 'system', content: 'You are an AI architect generating scenario.json for a YouTube Short in SHORT_LAYOUT v2 spec. Tone: direct, concrete numbers, no hype. Return ONLY valid JSON.\\n\\nStructure:\\n- 7 segments: 1=hook(5s), 2-6=body(6-7s), 7=cta(6s). Total ~45s.\\n- visual_type: hook_layered, numbered_macbook, project_chips, comparison_strikethrough, diagram_boxes, cta_buttons.\\n- At least 3 different visual_types across 7 segments.\\n- avatar_position: alternates top-right<->top-left, off for 2-3 segments.\\n- bottom_subtitle: curated 1-3 word UPPERCASE punch (not the voice_text). CTA = empty string.\\n- header_tag: > KEYWORD.kebab.\\n\\nEach segment has: id, act, duration, start, voice_text, visual_type, visual_params, bottom_subtitle.\\n\\nFor numbered_macbook visual_params have sections[{number, title, subtitle, code_filename, code_lines:[{text,color}], cue_word, cue_color}].\\nFor comparison_strikethrough — eyebrow, eyebrow_punch, strikethrough_items[], cue_word, cue_color, bottom_highlight.\\nFor project_chips — title, subtitle, chips[], bottom_lead, bottom_punch.\\nFor diagram_boxes — title, subtitle, boxes:[{text,color}], cue_word, cue_color.\\nFor hook_layered — header_tag, shadow_text, punch_word, punch_color, small_caption, bottom_title.\\nFor cta_buttons — lead, button_yes:{text,color}, button_no:{text,color}, username, cta.'},\n    {role: 'user', content: 'Topic: ' + $json.title_ru + '\\nSlug: ' + $json.slug_en + '\\nHype: ' + ($json.hype_score||'?') + '/100\\nKey points: ' + ($json.notes||'none')+'\\nCategory: '+($json.topic_category||'?') + '\\n\\nGenerate scenario.json.'}\n  ]\n}) }}",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'gpt-4o',\n  temperature: 0.7,\n  max_tokens: 4000,\n  response_format: {type: 'json_object'},\n  messages: [\n    {role: 'system', content: ($json.sys || \"Ты — Denis Shokhirev, Enterprise AI архитектор из Erlangen, Германия. Канал @ger_dennis_ai (DennisCraft AI Studio). Аудитория: разработчики, AI-инженеры, техлиды, founders в DACH/RU. Тон: прямой, практичный, конкретные числа, без воды, без хайпа. БЕЗ фраз \\\"крайне важно\\\", \\\"это переломный момент\\\", \\\"погружаемся\\\", \\\"революция\\\", \\\"переворот\\\".\\n\\nТвоя задача: сгенерировать scenario.json для YouTube Short (45 секунд, 7 сегментов, формат SHORT_LAYOUT v2).\\n\\nКРИТИЧНО: верни ТОЛЬКО валидный JSON, без markdown обёрток, без комментариев.\\n\\nСТРУКТУРА:\\n{\\n  \\\"title\\\": \\\"<title_ru>\\\",\\n  \\\"publish_date\\\": \\\"<YYYY-MM-DD сегодня>\\\",\\n  \\\"slug\\\": \\\"R<NNNN>_<slug_en_underscore>\\\",\\n  \\\"format\\\": \\\"short\\\",\\n  \\\"lang\\\": \\\"ru\\\",\\n  \\\"total_duration_target\\\": 45.0,\\n  \\\"header_tag\\\": \\\"> <KEYWORD>.<kebab>\\\",\\n  \\\"segments\\\": [\\n    // 1. HOOK (id=1, duration=5.0, start=0.0, act='hook')\\n    //    voice_text: 2 фразы 12-18 слов, hook-вопрос или провокация\\n    //    visual_type: 'hook_layered'\\n    //    visual_params: {header_tag, shadow_text (2 слова UPPERCASE \\\\n, 4-9 букв), punch_word (1-2 слова с числом/провокацией), punch_color (yellow|red|blue|green), small_caption (3-6 слов), bottom_title (1-2 слова UPPERCASE)}\\n    //    bottom_subtitle: 1-3 слова UPPERCASE punch\\n    \\n    // 2-6. BODY (duration=6-7s, start=5/12/19/26/33, act='body')\\n    //    voice_text: 2-3 фразы 18-25 слов\\n    //    visual_type: ОБЯЗАТЕЛЬНО 3+ разных типа из:\\n    //      - numbered_macbook (для code/config/cli) — sections[{number, title UPPERCASE, subtitle 6-10 слов lowercase, code_filename, code_lines:[{text, color: key|string|comment|default}] 5-8 строк, cue_word 1-2 слова, cue_color}]\\n    //      - project_chips (список проектов/features) — title, subtitle, chips[], bottom_lead, bottom_punch\\n    //      - comparison_strikethrough (X vs Y vs Z с зачёркиванием) — eyebrow UPPERCASE 1-2, eyebrow_punch UPPERCASE с :, strikethrough_items[], cue_word, cue_color (yellow|red), bottom_highlight UPPERCASE\\n    //      - diagram_boxes (архитектурный flow [A]→[B]→[C]) — title, subtitle, boxes:[{text, color}], cue_word, cue_color\\n    //    avatar_position в visual_params: чередование top-right → top-left → top-right → off → off → top-right\\n    //    bottom_subtitle: курированный 1-3 слова UPPERCASE punch (НЕ пересказ voice_text!)\\n    \\n    // 7. CTA (id=7, duration=6.0, start=39.0, act='cta')\\n    //    voice_text: \\\"Полный гайд на сайте gerdennisai.com. Подписывайся.\\\"\\n    //    visual_type: 'cta_buttons'\\n    //    visual_params: {avatar_position: 'top-center', lead UPPERCASE вопрос 3-5 слов, button_yes:{text:'✓ <UPPERCASE 2-3>', color:'green'}, button_no:{text:'✗ <UPPERCASE 2-4>', color:'red'}, username:'@ger_dennis_ai', cta:'ПОДПИШИСЬ ↓'}\\n    //    bottom_subtitle: \\\"\\\"\\n  ]\\n}\\n\\nПРАВИЛА:\\n1. Длительности: hook=5с, body=6-7с, cta=6с. ИТОГО 43-45 сек.\\n2. start: накопительно 0.0→5.0→12.0→19.0→26.0→33.0→39.0\\n3. header_tag: > KEYWORD.kebab (CLAUDE.code, AI.agents, VIBE.coding)\\n4. bottom_subtitle ПУНЧ — НЕ пересказ voice_text. Примеры: \\\"$3K В МЕСЯЦ\\\", \\\"ТЫ CTO\\\", \\\"0 СТРОК РУКАМИ\\\", \\\"3 ЧАСА В ПРОДЕ\\\"\\n5. visual_type разнообразие — минимум 3 разных типа за 7 сегментов\\n6. code_lines 5-8 строк реалистичный псевдокод. keys=жёлтые, strings=зелёные, comments=серые\\n7. cue_color: 3-4 разных цвета на видео для контраста\\n8. avatar_position: 3-4 сегмента с avatar, остальные off\\n9. voice_text на ЧИСТОМ русском. English термины можно если читается. \\\"Lovable\\\" → \\\"Лавабл\\\" если плохо произносит ElevenLabs\\n10. NO HYPE: никаких \\\"революция/переворот/изменит мир/крайне важно/погружаемся\\\". Конкретика: числа, имена тулов, реальные пейны.\\n\\nВерни ТОЛЬКО JSON.\")},\n    {role: 'user', content: 'Тема: ' + $json.title_ru + '\\nSlug: ' + $json.slug_en + '\\nHype: ' + ($json.hype_score||'?') + '/100\\nКлючевые тезисы: ' + ($json.notes||'нет') + '\\nКатегория: ' + ($json.topic_category||'?') + '\\n\\nСгенерируй scenario.json по правилам выше.'}\n  ]\n}) }}",
         "options": {
           "timeout": 120000
         }
@@ -169,7 +198,7 @@
       ],
       "credentials": {
         "openAiApi": {
-          "id": "${N8N_CRED_OPENAI_ID}",
+          "id": "2rRu9efMYpINfLXN",
           "name": "OpenAI"
         }
       }
@@ -207,7 +236,8 @@
             }
           ],
           "combinator": "and"
-        }
+        },
+        "options": {}
       },
       "id": "if-gpt-fail",
       "name": "GPT fail?",
@@ -220,7 +250,7 @@
     },
     {
       "parameters": {
-        "chatId": "=${TELEGRAM_TARGET_CHAT}",
+        "chatId": "={{$env.TELEGRAM_TARGET_CHAT}}",
         "text": "={{ '<b>YT Pilot v0.4 GPT scenario fail</b>\\n\\n' + $json.error + '\\n\\nRaw: <code>' + JSON.stringify($json.scenario || $json.raw || {}).slice(0, 400) + '</code>' }}",
         "additionalFields": {
           "parse_mode": "HTML"
@@ -234,24 +264,24 @@
         1780,
         400
       ],
+      "webhookId": "v04-gpt-fail",
       "credentials": {
         "telegramApi": {
-          "id": "${N8N_CRED_TELEGRAM_ID}",
-          "name": "Telegram Bot"
+          "id": "EzJMJSDlKUPFpG4t",
+          "name": "Telegram Mein_erste_bot"
         }
-      },
-      "webhookId": "v04-gpt-fail"
+      }
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "=${RECEIVER_BASE_URL}/scenario/save",
+        "url": "={{$env.RECEIVER_BASE_URL}}/scenario/save",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "X-Receiver-Secret",
-              "value": "=${RECEIVER_SECRET}"
+              "value": "={{$env.RECEIVER_SECRET}}"
             },
             {
               "name": "Content-Type",
@@ -278,13 +308,13 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=${RECEIVER_BASE_URL}/render_queued",
+        "url": "={{$env.RECEIVER_BASE_URL}}/render_queued",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "X-Receiver-Secret",
-              "value": "=${RECEIVER_SECRET}"
+              "value": "={{$env.RECEIVER_SECRET}}"
             },
             {
               "name": "Content-Type",
@@ -328,7 +358,8 @@
             }
           ],
           "combinator": "and"
-        }
+        },
+        "options": {}
       },
       "id": "if-render-ok",
       "name": "Render ok?",
@@ -341,7 +372,7 @@
     },
     {
       "parameters": {
-        "chatId": "=${TELEGRAM_TARGET_CHAT}",
+        "chatId": "={{$env.TELEGRAM_TARGET_CHAT}}",
         "text": "={{ '<b>YT Pilot v0.4 render fail</b>\\n\\nslug=' + $('Build scenario payload').first().json.slug + '\\nerror=' + ($json.error || 'unknown') + '\\nlog=<code>' + ($json.log || 'no log').toString().slice(-300) + '</code>' }}",
         "additionalFields": {
           "parse_mode": "HTML"
@@ -355,13 +386,13 @@
         2440,
         850
       ],
+      "webhookId": "v04-render-fail",
       "credentials": {
         "telegramApi": {
-          "id": "${N8N_CRED_TELEGRAM_ID}",
-          "name": "Telegram Bot"
+          "id": "EzJMJSDlKUPFpG4t",
+          "name": "Telegram Mein_erste_bot"
         }
-      },
-      "webhookId": "v04-render-fail"
+      }
     },
     {
       "parameters": {
@@ -379,13 +410,13 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=${RECEIVER_BASE_URL}/youtube/upload",
+        "url": "={{$env.RECEIVER_BASE_URL}}/youtube/upload",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "X-Receiver-Secret",
-              "value": "=${RECEIVER_SECRET}"
+              "value": "={{$env.RECEIVER_SECRET}}"
             },
             {
               "name": "Content-Type",
@@ -395,7 +426,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ mp4_path: $json.mp4_path, title: $json.title, description: $json.description, tags: $json.tags, lang: $json.lang, privacy: $json.privacy }) }}",
+        "jsonBody": "={{ JSON.stringify({ mp4_path: $json.mp4_path, title: $json.title, description: $json.description, tags: $json.tags, lang: $json.lang, privacy: $json.privacy, slug: $json.slug, topic_id: $json.topic_id }) }}",
         "options": {
           "timeout": 600000
         }
@@ -429,7 +460,8 @@
             }
           ],
           "combinator": "and"
-        }
+        },
+        "options": {}
       },
       "id": "if-upload-ok",
       "name": "Upload ok?",
@@ -442,7 +474,7 @@
     },
     {
       "parameters": {
-        "chatId": "=${TELEGRAM_TARGET_CHAT}",
+        "chatId": "={{$env.TELEGRAM_TARGET_CHAT}}",
         "text": "={{ '<b>YT upload FAIL v0.4</b>\\n\\nslug=' + $('Build YT payload').first().json.slug + '\\nexit=' + ($json.exit_code ?? '?') + '\\n<code>' + ($json.log || $json.error || '').toString().slice(-300) + '</code>' }}",
         "additionalFields": {
           "parse_mode": "HTML"
@@ -456,13 +488,13 @@
         3100,
         750
       ],
+      "webhookId": "v04-upload-fail",
       "credentials": {
         "telegramApi": {
-          "id": "${N8N_CRED_TELEGRAM_ID}",
-          "name": "Telegram Bot"
+          "id": "EzJMJSDlKUPFpG4t",
+          "name": "Telegram Mein_erste_bot"
         }
-      },
-      "webhookId": "v04-upload-fail"
+      }
     },
     {
       "parameters": {
@@ -487,7 +519,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=${SUPABASE_GENESIS_URL}/rest/v1/yt_published",
+        "url": "={{$env.SUPABASE_GENESIS_URL}}/rest/v1/yt_published",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
@@ -520,15 +552,15 @@
       ],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "${N8N_CRED_SUPABASE_ID}",
-          "name": "supabase_genesis"
+          "id": "z9KfDddxStUBbK3E",
+          "name": "Supabase Genesis apikey (fixed 2026-05-24)"
         }
       }
     },
     {
       "parameters": {
         "method": "PATCH",
-        "url": "=${SUPABASE_GENESIS_URL}/rest/v1/topics?id=eq.{{ $('Normalize topic').first().json.id }}",
+        "url": "={{$env.SUPABASE_GENESIS_URL}}/rest/v1/topics?id=eq.{{ $('Normalize topic').first().json.id }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
@@ -557,18 +589,18 @@
       ],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "${N8N_CRED_SUPABASE_ID}",
-          "name": "supabase_genesis"
+          "id": "z9KfDddxStUBbK3E",
+          "name": "Supabase Genesis apikey (fixed 2026-05-24)"
         }
       }
     },
     {
       "parameters": {
-        "chatId": "=${TELEGRAM_TARGET_CHAT}",
+        "chatId": "={{$env.TELEGRAM_TARGET_CHAT}}",
         "text": "={{ '<b>YT Pilot v0.4 ZERO-TOUCH DONE</b>\\n\\nslug: ' + $('Build YT payload').first().json.slug + '\\nyoutube: ' + $('POST /youtube/upload').first().json.url + '\\nhype: ' + $('Normalize topic').first().json.hype_score + '\\nrender: ' + $('POST /render_queued (sync, up to 40 min)').first().json.duration_s + 's, upload: ' + $('POST /youtube/upload').first().json.duration_s + 's' }}",
         "additionalFields": {
-          "parse_mode": "HTML",
-          "disable_web_page_preview": false
+          "disable_web_page_preview": false,
+          "parse_mode": "HTML"
         }
       },
       "id": "tg-success",
@@ -579,13 +611,109 @@
         3760,
         500
       ],
+      "webhookId": "v04-success",
       "credentials": {
         "telegramApi": {
-          "id": "${N8N_CRED_TELEGRAM_ID}",
-          "name": "Telegram Bot"
+          "id": "EzJMJSDlKUPFpG4t",
+          "name": "Telegram Mein_erste_bot"
         }
+      }
+    },
+    {
+      "id": "440e9896-255a-4c47-8444-0c5591d00f2b",
+      "name": "Build IG/FB captions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3100,
+        760
+      ],
+      "parameters": {
+        "jsCode": "// IG/FB captions (PUBLISHING_RULES: IG <=5 хештегов hard cap, FB descriptive <=3)\nconst topic = $('Normalize topic').first().json;\nconst yt = $('Build YT payload').first().json;\nconst titleRu = (topic.title_ru || yt.title || 'AI').replace(/\\s*#shorts\\s*$/i,'').trim();\nconst hook = titleRu.slice(0,120);\nconst cta = 'Работаешь с AI/автоматизацией? Напиши АГЕНТ — пришлю pipeline бесплатно ⬇️';\nconst ig_caption = [hook,'',\n  'Genesis OS делает это автономно: тема → сценарий → рендер → публикация. Без ручного труда.','',\n  cta,'',\n  '#AI #нейросети #автоматизация #ИИ #ContentMachine'].join('\\n');\nconst fb_description = [hook + '.','',\n  'Автономный AI-пайплайн (агенты + n8n) сам генерирует и публикует контент — от выбора темы до рендера видео.','',\n  '#AI #автоматизация'].join('\\n');\nreturn [{ json: { mp4_path: yt.mp4_path, ig_caption, fb_description } }];"
+      }
+    },
+    {
+      "id": "3b4383f0-f488-46a9-b674-38d30abb9a67",
+      "name": "POST /instagram/upload",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3340,
+        760
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.RECEIVER_BASE_URL}}/instagram/upload",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Receiver-Secret",
+              "value": "={{$env.RECEIVER_SECRET}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ mp4_path: $('Build IG/FB captions').first().json.mp4_path, caption: $('Build IG/FB captions').first().json.ig_caption }) }}",
+        "options": {
+          "timeout": 360000
+        }
+      }
+    },
+    {
+      "id": "1c9e3b8a-07c6-47cd-8034-ff600e6ea404",
+      "name": "POST /facebook/upload",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3580,
+        760
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.RECEIVER_BASE_URL}}/facebook/upload",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Receiver-Secret",
+              "value": "={{$env.RECEIVER_SECRET}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ mp4_path: $('Build IG/FB captions').first().json.mp4_path, description: $('Build IG/FB captions').first().json.fb_description }) }}",
+        "options": {
+          "timeout": 180000
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nlet sys = null;\ntry {\n  const r = await this.helpers.httpRequest({ method: 'GET', url: 'https://raw.githubusercontent.com/DenisShokhirev041279/genesis-content-os/main/prompts/scenario_v2.md', returnFullResponse: false });\n  const md = typeof r === 'string' ? r : (r.body || '');\n  const m = md.match(/## System prompt\\s*```(.*?)```/s);\n  if (m && m[1].trim().length > 200) sys = m[1].trim();\n} catch (e) { sys = null; }\nreturn [{ json: { ...item, sys } }];\n"
       },
-      "webhookId": "v04-success"
+      "id": "fetch-scenario-prompt-node",
+      "name": "Fetch scenario prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        550
+      ]
     }
   ],
   "connections": {
@@ -593,7 +721,7 @@
       "main": [
         [
           {
-            "node": "Supabase: select topic queued",
+            "node": "Supabase: claim_next_topic (L1 atomic)",
             "type": "main",
             "index": 0
           }
@@ -604,18 +732,7 @@
       "main": [
         [
           {
-            "node": "Supabase: select topic queued",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Supabase: select topic queued": {
-      "main": [
-        [
-          {
-            "node": "Normalize topic",
+            "node": "Supabase: claim_next_topic (L1 atomic)",
             "type": "main",
             "index": 0
           }
@@ -644,7 +761,7 @@
         ],
         [
           {
-            "node": "GPT-4o: generate scenario",
+            "node": "Fetch scenario prompt",
             "type": "main",
             "index": 0
           }
@@ -760,6 +877,11 @@
             "node": "TG public channel post",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Build IG/FB captions",
+            "type": "main",
+            "index": 0
           }
         ],
         [
@@ -803,13 +925,53 @@
           }
         ]
       ]
+    },
+    "Supabase: claim_next_topic (L1 atomic)": {
+      "main": [
+        [
+          {
+            "node": "Normalize topic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build IG/FB captions": {
+      "main": [
+        [
+          {
+            "node": "POST /instagram/upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST /instagram/upload": {
+      "main": [
+        [
+          {
+            "node": "POST /facebook/upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch scenario prompt": {
+      "main": [
+        [
+          {
+            "node": "GPT-4o: generate scenario",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
-    "executionOrder": "v1",
-    "saveManualExecutions": true,
-    "saveExecutionProgress": true,
-    "timezone": "Europe/Berlin",
-    "callerPolicy": "workflowsFromSameOwner"
+    "executionOrder": "v1"
   }
 }
