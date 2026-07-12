@@ -47,3 +47,8 @@ PLAYBOOK_v*.md
 # Symlinked code from sibling projects (kept out of public repo)
 scripts/g_b_subtitles.py
 MULTI_CHANNEL_LOG.md
+
+# Внутренние доки (НЕ публиковать — честная оценка, стратегия)
+AUDIT_FABLE_*.md
+WORK_REPORT_*.md
+STRATEGY_PRODUCER_*.md
