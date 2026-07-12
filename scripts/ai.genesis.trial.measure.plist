@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.genesis.trial.measure</string>
+
+    <!--
+      G_E trial-measure — замыкает эволюционный цикл:
+      мерит каждое авто-изменение промпта против реальных метрик и откатывает провалы.
+      --apply: реальный откат. Безопасно by design — авто-merge реверта только при
+      severe-просадке (≥25%), мягкие просадки открывают PR на ревью Дениса.
+      Активация:
+        cp scripts/ai.genesis.trial.measure.plist ~/Library/LaunchAgents/
+        launchctl load ~/Library/LaunchAgents/ai.genesis.trial.measure.plist
+    -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/shokhirevdenis/Obsidian_AI_Brain/Projects/genesis-content-os/scripts/g_e_trial_measure.py</string>
+        <string>--once</string>
+        <string>--apply</string>
+    </array>
+
+    <!-- Среда 21:00 Berlin — после понедельничного decision+merge, даём изменениям вызреть -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key><integer>3</integer>
+        <key>Hour</key><integer>21</integer>
+        <key>Minute</key><integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/shokhirevdenis/Obsidian_AI_Brain/logs/g_e_trial_measure.stdout</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/shokhirevdenis/Obsidian_AI_Brain/logs/g_e_trial_measure.stderr</string>
+
+    <key>KeepAlive</key>
+    <false/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

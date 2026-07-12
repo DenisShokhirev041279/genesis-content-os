@@ -14,7 +14,7 @@
 <p align="center"><b>An open-source agent that analyzes its own audience and opens PRs to rewrite its own prompts.</b><br><a href="https://gerdennisai.com/genesis/">▶ live dashboard</a> · <a href="#architecture">architecture</a></p>
 
 
-Genesis Content OS scans daily AI/dev news (GitHub trending, Hacker News, Reddit), distills the strongest signals into ranked topics with GPT-4.1, generates posts for **5 channels** (Ghost RU, Ghost EN, Telegram, LinkedIn, YouTube Shorts), publishes them on schedule, and reads its own engagement metrics back to tune what it writes next.
+Genesis Content OS scans daily AI/dev news (GitHub trending + Hacker News; Reddit/ProductHunt on the roadmap), distills the strongest signals into ranked topics with GPT-4.1, generates posts for **5 channels** (Ghost RU, Ghost EN, Telegram, LinkedIn, YouTube Shorts), publishes them on schedule, and reads its own engagement metrics back to tune what it writes next.
 
 Voice-cloned audio (ElevenLabs) and avatar video (HeyGen) are produced from the same topic record. From topic discovery to a live post on every channel takes about 3 days.
 
@@ -48,7 +48,7 @@ The point is **Module E**: the system reads its own performance and rewrites its
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                Trend Sources (GitHub, Hacker News, Reddit)       │
+│         Trend Sources (GitHub, Hacker News · Reddit/PH: roadmap) │
 └───────────────────────────────┬──────────────────────────────────┘
                                 │
                   ┌─────────────▼──────────────┐
@@ -81,10 +81,16 @@ The point is **Module E**: the system reads its own performance and rewrites its
                   └─────────────┬──────────────┘
                                 │
                   ┌─────────────▼──────────────┐
-                  │  Module E: auto-decision   │   prompt-version bump
-                  │  → prompts (new version)   │   on evidence threshold
-                  └─────────────┬──────────────┘   ⬅ THE INTERESTING PART
+                  │  Module E: auto-decision   │   opens PR rewriting its
+                  │  → PR → prompts (new ver.) │   own prompt, syncs on merge
+                  └─────────────┬──────────────┘
                                 │
+                  ┌─────────────▼──────────────┐
+                  │  Module E-measure          │   measures new version vs
+                  │  → verdict: keep / rollback │   baseline on REAL metrics
+                  └─────────────┬──────────────┘   ⬅ THE INTERESTING PART
+                                │  regression? → auto revert-PR → restore baseline
+                                │  (closed feedback loop: only real wins survive)
                   ┌─────────────▼──────────────┐
                   │  Module F: weekly-reports  │
                   │  → weekly_reports          │
@@ -106,11 +112,12 @@ The point is **Module E**: the system reads its own performance and rewrites its
 | **B — content-gen** | Topic → post per channel, voice + avatar render | live |
 | **B+ — LinkedIn carousel** | PDF carousels via ReportLab (style: a16z deck, not SaaS marketing) | live (manual approval gate via Telegram) |
 | **C — metrics** | Pull engagement from Ghost / TG / LinkedIn / YT into `metrics_snapshots` | live |
-| **D — analyzer** | Weekly GPT-4.1 review → `insights` with evidence | planned (2026-Q3) |
-| **E — auto-decision** | Apply approved insights as new prompt versions | planned (2026-Q3) |
-| **F — weekly-reports** | Generate `weekly_reports` markdown digest | planned (2026-Q4) |
+| **D — analyzer** | Weekly GPT-4.1 review → `insights` with evidence | live |
+| **E — auto-decision** | Turn insights into PRs that rewrite prompt files, sync merged versions into `prompts` | live (18 machine-authored PRs) |
+| **E-measure — trial/rollback** | Measure each activated prompt version against real metrics; auto-roll-back regressions | live |
+| **F — weekly-reports** | Generate `weekly_reports` markdown digest | partial |
 
-Module E is where Genesis becomes autonomous. It reads its own performance, identifies what worked, drafts a new prompt version, and **asks the human to approve the diff** — not the post, the prompt itself. The human becomes a trainer, not an author.
+Module E is where Genesis becomes autonomous — and **E-measure is where it becomes trustworthy**. E reads its own performance and opens a Pull Request that rewrites its own prompt (18 real machine-authored PRs in git). E-measure then does the part almost nobody does: after a prompt change is activated, it compares the real metric (e.g. YouTube views) of content produced *after* the change against the *baseline before it* — and if the change made things worse, it **opens a revert PR and restores the baseline automatically**. The loop isn't "the system rewrites itself" — it's "the system rewrites itself, measures the result against reality, and keeps only what actually worked." Darwin, not blind self-editing. The human is a trainer, not an author.
 
 ---
 

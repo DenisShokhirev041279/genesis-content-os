@@ -392,15 +392,21 @@ def process_group(prompt_file: str, group: list[dict], args) -> str | None:
                "--base", "main", "--head", branch)
         pr_url = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else None
 
-        all_high = all((i.get("proposed_change") or {}).get("confidence") == "high"
-                       for i in applied)
+        confs = [(i.get("proposed_change") or {}).get("confidence") for i in applied]
+        all_high = all(c == "high" for c in confs)
+        # measured-merge: раз провал теперь ИЗМЕРЯЕТСЯ и АВТО-ОТКАТЫВАЕТСЯ
+        # (g_e_trial_measure.py), medium-confidence можно мержить автономно —
+        # реальность потом рассудит, а не человек-гейт. Это и делает «Она. Сама.»
+        # буквально правдой, оставаясь безопасным.
+        measured_ok = args.measured_merge and all(c in ("medium", "high") for c in confs)
         merged = False
-        if pr_url and all_high and not args.no_auto_merge:
+        if pr_url and (all_high or measured_ok) and not args.no_auto_merge:
             mr = gh("pr", "merge", pr_url, "--squash", "--delete-branch", check=False)
             merged = mr.returncode == 0
-            print(f"  [auto-merge] {'✓ MERGED' if merged else 'FAILED: ' + mr.stderr[:120]}")
+            gate = "high-confidence" if all_high else "measured-merge (medium, auto-rollback armed)"
+            print(f"  [auto-merge] {'✓ MERGED' if merged else 'FAILED: ' + mr.stderr[:120]} via {gate}")
         elif pr_url:
-            why = "auto-merge disabled" if args.no_auto_merge else "medium-confidence in group → manual review"
+            why = "auto-merge disabled" if args.no_auto_merge else "medium-confidence, --measured-merge off → manual review"
             print(f"  [manual] PR left open: {pr_url} ({why})")
 
         for i in applied:
@@ -435,6 +441,9 @@ def main():
     ap.add_argument("--insight-id", type=str)
     ap.add_argument("--no-auto-merge", action="store_true",
                     help="never auto-merge; leave every PR open for manual review")
+    ap.add_argument("--measured-merge", action="store_true",
+                    help="auto-merge medium-confidence too — safe because g_e_trial_measure "
+                         "measures each change and auto-rolls-back regressions")
     args = ap.parse_args()
 
     if not SUPABASE_KEY:
