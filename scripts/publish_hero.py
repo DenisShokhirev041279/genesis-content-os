@@ -55,10 +55,7 @@ HOME = Path.home()
 MOTIONVIRAL = HOME / "Obsidian_AI_Brain/Projects/MotionViral"
 LOG_FILE = HOME / "Obsidian_AI_Brain/Projects/genesis-content-os/MULTI_CHANNEL_LOG.md"
 RECEIVER_URL = os.environ.get("RECEIVER_BASE_URL", "http://localhost:8787")
-RECEIVER_SECRET = os.environ.get(
-    "RECEIVER_SECRET",
-    "***REMOVED***",
-)
+RECEIVER_SECRET = os.environ["RECEIVER_SECRET"]
 TG_CHANNEL_ID = "-1002216661152"
 LINKEDIN_SKIP_REASON = (
     "linkedin idет через approval-gate бот в TG (feedback_linkedin_approval_gate). "
@@ -341,6 +338,7 @@ def publish_youtube(mp4: Path, plan: dict[str, str], dry: bool) -> dict:
     title = plan.get("title", "")
     description = plan.get("description", "")
     tags = plan.get("tags", "")
+    privacy = (plan.get("privacy", "").strip() or "unlisted")
     # tags из MD code block — типа "#Shorts #AI #ClaudeCode" — парсим в list
     tag_list = [t.strip("# ") for t in re.findall(r"#\w+", tags)][:5]
     if not title:
@@ -351,7 +349,7 @@ def publish_youtube(mp4: Path, plan: dict[str, str], dry: bool) -> dict:
             "title": title,
             "description_chars": len(description),
             "tags": tag_list,
-            "privacy": "unlisted (по умолчанию — Денис делает public позже)",
+            "privacy": privacy,
         }}
     py = HOME / "Obsidian_AI_Brain/Projects/ContentMachine/.venv/bin/python"
     uploader = HOME / "Obsidian_AI_Brain/youtube_uploader.py"
@@ -359,7 +357,7 @@ def publish_youtube(mp4: Path, plan: dict[str, str], dry: bool) -> dict:
         str(py), str(uploader), str(mp4),
         "-t", title,
         "-d", description,
-        "--privacy", "unlisted",
+        "--privacy", privacy,
         "--lang", "ru",
     ]
     if tag_list:
