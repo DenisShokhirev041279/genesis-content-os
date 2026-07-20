@@ -23,7 +23,7 @@
 - `infra` / serverless / API reliability
 - `llm-tools` / how-to / production patterns
 
-**Целевая доля тем про `ai-agents` и `infra` — ≥70% от еженедельного контента во всех каналах.**
+**Целевая доля тем про `ai-agents` и `llm-tools` — ≥98% от еженедельного контента во всех каналах.**
 
 ### 3. Доля форматов
 - Pain-point / how-to / production-проблемы: **целевая доля ≥84%**
