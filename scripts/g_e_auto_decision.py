@@ -142,12 +142,23 @@ def detect_prompt_file(suggestion: str, target_module: str | None = None) -> str
       'topic_distiller' → topic_distiller.md (выбор тем / рост)
       'scenario_v2'/None → scenario_v2.md (визуальная структура Shorts)
     """
+    # PROTECTED: content_factory.md carries the GEO quotable output contract.
+    # Module E must NEVER auto-rewrite it (belt-and-suspenders — it already isn't
+    # in the target set below, but refuse explicitly if an insight points at it).
+    _protected = {"content_factory", "content_factory.md"}
+    if (target_module in _protected) or ("content_factory" in suggestion.lower()):
+        raise ValueError(
+            "detect_prompt_file: content_factory.md is a protected article contract, "
+            "not auto-editable by Module E"
+        )
     if target_module == "topic_distiller":
         return "topic_distiller.md"
     s = suggestion.lower()
     if "scenario_v3" in s or "v3.md" in s:
         return "scenario_v3.md"
-    return "scenario_v2.md"
+    result = "scenario_v2.md"
+    assert result not in _protected  # tripwire
+    return result
 
 
 # ============== GPT rewrite ==============
