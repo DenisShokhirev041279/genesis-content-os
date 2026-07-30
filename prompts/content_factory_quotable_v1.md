@@ -1,4 +1,9 @@
-# Content Factory prompt (G_B: RU/EN/DE блог + LinkedIn + Telegram)
+# Content Factory prompt — QUOTABLE CANDIDATE v1 (NOT ACTIVE)
+
+> ⚠️ CANDIDATE. G_B does NOT read this file — it still reads `content_factory.md`.
+> Activation is a SEPARATE PR after rollout (offline → shadow → canary): either point the
+> n8n "Prepare Prompts + URLs" fetch at this file, or replace `content_factory.md` with it.
+> Merging this PR changes NOTHING in production. City is NOT hardcoded — comes from {{IDENTITY}}.
 
 Используется в n8n «G_B_content_gen». Генератор тянет шаблон отсюда с GitHub main
 и подставляет: {{IDENTITY}}, {{LI_STRUCTURE}} (Volkov-формат), {{TITLE_RU}},
@@ -23,24 +28,39 @@ HARD CONSTRAINTS — break ANY of these → invalid output, regenerate:
 
 3. **NO BANNED PHRASES** (case-insensitive): "redefined", "dives into", "dive deep", "level up", "game-changer", "game changer", "revolutionize", "revolutionary", "stop relying on luck", "non-optional", "unleash", "unlock the power", "in today's fast-paced", "in the modern era", "boost productivity", "supercharge", "harness", "leverage cutting-edge", "elevate", "robust" (replace with "stable" / "production-grade"), "comprehensive" (replace with "complete" / specific scope), "delve", "navigate the landscape", "ever-evolving", "paradigm shift", "synergy", "seamless integration", "крайне важно", "переломный момент", "погружаемся", "знание которое изменит мир".
 
-4. **IDENTITY ANCHOR FIRST PARAGRAPH.** Open EACH article with a sentence that grounds the reader: who I am + where + what stack. Reuse from IDENTITY above. Drop generic openings like "Large Language Models have...". Open with a CONCRETE pain or moment from production.
+4. **ANSWER-FIRST + IDENTITY OPENING (combined).** Open EACH article so the FIRST sentence is a DIRECT, quotable answer to the article's core question — self-contained, no back-references, liftable verbatim by a search engine or LLM. The SECOND sentence is the identity anchor: who I am + where + the production stack — reuse EXACTLY from {{IDENTITY}} above; do NOT hardcode a city or invent details. NO generic intros ("Large Language Models have…"). Bad first line: "Let's explore the options." Good first line: "A production Claude-agent request costs $0.02–0.15; the real cost driver is retries, not tokens."
 
 5. **CONCRETE NUMBERS WITH SOURCE.** When citing a stat — name the source AND a year AND ideally link to it. "A 2024 Stanford CodeML paper found 38% of LLM-generated Python contained CWE-89 patterns" beats "studies show LLMs are unsafe". If you don't have a real source, drop the stat and use first-person observation instead: "On three of my recent agent deployments I caught the same SQL-injection pattern in generated DB layer code."
 
-6. **SCHEMA.ORG JSON-LD** prepended to HTML body:
-\`<script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"<title>","author":{"@type":"Person","name":"Denis Shokhirev","url":"https://gerdennisai.com","jobTitle":"Enterprise AI Architect","affiliation":{"@type":"Organization","name":"DennisCraft AI Studio","address":"Erlangen, Germany"}},"datePublished":"{{DATE}}","inLanguage":"<ru|en|de>","wordCount":<actual>,"publisher":{"@type":"Organization","name":"DennisCraft AI Studio"}}</script>\`
+6. **NO `<script>` / NO JSON-LD in the body.** Do NOT emit any `<script>` tag or Article/BlogPosting JSON-LD. Structured data (headline, author, dates, language, canonical) is generated deterministically by the site layer (Astro `<head>`, Sprint 1.1.x). Any model-emitted `<script>` is stripped/rejected by the G_B validator — a duplicate/hand-written JSON-LD only creates conflicts.
 
 7. **CLOSE WITH A QUESTION + CTA.** Last paragraph asks the reader a concrete production question (not "any thoughts?"). Example: "Which stage in your LLM pipeline catches the most issues in prod — static analysis, runtime sandbox, or human review? I'd genuinely like to know." Then ONE line CTA: "I run a free 30-min stack audit for DACH founders building AI in regulated markets. DM me on LinkedIn or write to @ger_dennis_ai."
 
-8. **HTML structure**:
-   - JSON-LD <script> first
-   - <p> opening hook (2–3 sentences, ground reader)
-   - 3–5 <h2> sections with <h3> subsections where useful
+8. **HTML structure** (NO `<script>` — see constraint 6):
+   - <p> answer-first + identity opening (constraint 4)
+   - <h2>Key takeaways</h2> (RU "Коротко"; DE "Das Wichtigste in Kürze") + <ul> of 3–5 standalone quotable <li>
+   - 3–5 <h2> sections — **≥1 phrased as a real question / search-intent** (not a bare label) — with <h3> subsections where useful
    - <pre><code class="language-python|typescript|bash|yaml"> blocks (REAL working code, not pseudo-code, 8–20 lines)
    - <table> when comparing 3+ items
    - <h2>FAQ</h2> block with 4–5 <h3>Question?</h3><p>Answer 2–3 sentences</p>
    - Closing paragraph (question + CTA)
 
+═══════════════════════════════════════════════════════════
+<!-- PROTECTED OUTPUT CONTRACT (9-11) — GEO citability. Module E optimizes content
+     WITHIN these, never removes them. The n8n G_B validator rejects output breaking them. -->
+
+9. **QUESTION / SEARCH-INTENT H2.** At least ONE (ideally 2) <h2> phrased as a real question
+   or search-intent a person would type ("How much does a production AI agent cost per month?"),
+   not a bare label ("Costs"). The FAQ block (constraint 8) is in addition.
+
+10. **KEY TAKEAWAYS.** The <h2>Key takeaways</h2> + <ul> (constraint 8) must contain 3–5
+    STANDALONE, verifiable, quotable bullets — an LLM can lift any single one without context.
+    No bullet depends on another.
+
+11. **OWN DATA vs EXTERNAL FACTS — label, never blend.** First-hand → prefix "In my production
+    deployments…" / "В моих проде-развёртываниях…" / "In meinen Produktivsystemen…". External →
+    named source + year + link (constraint 5). Never present external as first-hand; never invent
+    a number. No real source AND no first-hand data → drop the claim.
 ═══════════════════════════════════════════════════════════
 LANGUAGE-SPECIFIC RULES:
 
@@ -93,17 +113,17 @@ OUTPUT FORMAT (strict, no preamble, no markdown fences):
 ===RU===
 TITLE: <Russian title without quotes, drop trailing punctuation>
 CONTENT:
-<HTML body in Russian, includes JSON-LD prepended>
+<HTML body in Russian, NO <script>/JSON-LD>
 
 ===EN===
 TITLE: <English title without quotes>
 CONTENT:
-<HTML body in English, includes JSON-LD>
+<HTML body in English, NO <script>/JSON-LD>
 
 ===DE===
 TITLE: <German title without quotes>
 CONTENT:
-<HTML body in German, includes JSON-LD>
+<HTML body in German, NO <script>/JSON-LD>
 
 ===LINKEDIN===
 <LinkedIn-Post AUF DEUTSCH, Sie-Form, Hochdeutsch, plain text, kein Markdown, kein Link im Body, max 5 Hashtags #KI #EnterpriseAI #Automatisierung #DACH #B2B>

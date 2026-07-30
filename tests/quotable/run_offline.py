@@ -18,11 +18,11 @@ import argparse, json, os, re, sys, urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from validate_article import validate_bundle  # noqa: E402
+from validate_article import validate_bundle, bundle_ok  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
-PROMPT_FILE = ROOT / "prompts" / "content_factory.md"
-IDENTITY = ("Denis Shokhirev, Enterprise AI Architect, Freiburg, Germany. "
+PROMPT_FILE = ROOT / "prompts" / "content_factory_quotable_v1.md"  # candidate under test
+IDENTITY = ("Denis Shokhirev, Enterprise AI Architect, Germany. "
             "Stack: Claude Code, n8n, Supabase, FastAPI, Astro, Ghost.")
 
 
@@ -90,7 +90,7 @@ def main() -> int:
             results.append({"topic": slug, "rendered_chars": len(prompt), "validated": False})
             continue
         rep = validate_bundle(parse_output(call_gpt(prompt)))
-        ok = all(not v for v in rep.values())
+        ok = bundle_ok(rep)
         failures += 0 if ok else 1
         results.append({"topic": slug, "contract_ok": ok, "report": rep})
         print(f"[{i}/{len(topics)}] {slug}: {'OK' if ok else 'FAIL ' + json.dumps(rep, ensure_ascii=False)}")
