@@ -30,7 +30,15 @@ BANNED = [
     "seamless integration", "крайне важно", "переломный момент", "погружаемся",
     "знание которое изменит мир",
 ]
-KEY_TAKEAWAYS = re.compile(r"key takeaways|коротко|das wichtigste", re.I)
+# Language-agnostic matcher — used to LOCATE the KT block and exclude it from question-H2 counting.
+KEY_TAKEAWAYS_ANY = re.compile(r"key takeaways|коротко|das wichtigste", re.I)
+# Language-AWARE exact heading per required lang: a RU article MUST use "Коротко",
+# not the English "Key takeaways" (and vice versa).
+KEY_TAKEAWAYS_BY_LANG = {
+    "ru": re.compile(r"^\s*коротко\s*$", re.I),
+    "en": re.compile(r"^\s*key takeaways\s*$", re.I),
+    "de": re.compile(r"^\s*das wichtigste in kürze\s*$", re.I),
+}
 FAQ = re.compile(r"\b(faq|часто задаваем|häufige)", re.I)
 QUESTION_START = re.compile(
     r"^\s*(how|why|what|which|when|where|who|wie|warum|was|wann|wo|wer|welche|wieviel|"
@@ -38,7 +46,8 @@ QUESTION_START = re.compile(
 H2 = re.compile(r"<h2[^>]*>(.*?)</h2>", re.I | re.S)
 CODEBLOCK = re.compile(r"<pre\b.*?</pre>|<code\b.*?</code>", re.I | re.S)
 TAG = re.compile(r"<[^>]+>")
-HREFLANG_LINK = re.compile(r"<link[^>]+rel=[\"']?alternate[\"']?[^>]*hreflang", re.I)
+# Any <link> carrying an hreflang attribute, in ANY attribute order (rel before/after hreflang).
+HREFLANG_LINK = re.compile(r"<link\b(?=[^>]*\bhreflang\s*=)[^>]*>", re.I)
 JSONLD_TYPE = re.compile(r"\"@type\"\s*:\s*\"(article|blogposting|techarticle)\"", re.I)
 
 
@@ -84,13 +93,14 @@ def validate_article(html: str, lang: str = "en") -> list[str]:
     h2s = [_strip_tags(m.group(1)).strip() for m in H2.finditer(html)]
     if not (5 <= len(h2s) <= 7):
         errs.append(f"H2 count {len(h2s)} out of 5-7")
-    if not h2s or not KEY_TAKEAWAYS.search(h2s[0]):
-        errs.append("first <h2> is not Key takeaways")
+    kt_re = KEY_TAKEAWAYS_BY_LANG.get(lang, KEY_TAKEAWAYS_ANY)
+    if not h2s or not kt_re.search(h2s[0]):
+        errs.append(f"first <h2> is not the localized Key takeaways for lang={lang}")
     if not _key_takeaways_ul_ok(html):
         errs.append("Key takeaways <h2> not immediately followed by <ul> of 3-5 <li>")
     if not any(FAQ.search(t) for t in h2s):
         errs.append("no FAQ <h2>")
-    content_q = [t for t in h2s if _is_question(t) and not KEY_TAKEAWAYS.search(t) and not FAQ.search(t)]
+    content_q = [t for t in h2s if _is_question(t) and not KEY_TAKEAWAYS_ANY.search(t) and not FAQ.search(t)]
     if len(content_q) < 1:
         errs.append("no content question/search-intent <h2>")
 

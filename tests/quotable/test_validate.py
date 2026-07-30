@@ -76,6 +76,22 @@ def test_body_hreflang_rejected():
     assert any("hreflang" in e for e in validate_article(h))
 
 
+def test_reversed_attr_hreflang_rejected():
+    # hreflang BEFORE rel — must still be rejected (attribute-order independent)
+    h = '<link hreflang="de" href="x" rel="alternate"/>' + valid_html()
+    assert any("hreflang" in e for e in validate_article(h))
+
+
+def test_wrong_localization_rejected():
+    # RU article using the English "Key takeaways" heading must fail the language-aware check
+    errs = validate_article(valid_html("Key takeaways"), "ru")
+    assert any("localized Key takeaways" in e for e in errs)
+    # correct localized heading passes that specific check for each language
+    assert not any("localized Key takeaways" in e for e in validate_article(valid_html("Коротко"), "ru"))
+    assert not any("localized Key takeaways" in e for e in validate_article(valid_html("Das Wichtigste in Kürze"), "de"))
+    assert not any("localized Key takeaways" in e for e in validate_article(valid_html("Key takeaways"), "en"))
+
+
 def test_key_takeaways_as_p_rejected():
     # Key-takeaways only as a <p>, not <h2>+<ul>
     h = valid_html().replace("<h2>Key takeaways</h2><ul><li>one</li><li>two</li><li>three</li></ul>",
