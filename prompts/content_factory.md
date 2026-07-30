@@ -42,6 +42,32 @@ HARD CONSTRAINTS — break ANY of these → invalid output, regenerate:
    - Closing paragraph (question + CTA)
 
 ═══════════════════════════════════════════════════════════
+<!-- PROTECTED OUTPUT CONTRACT (9-12) — GEO citability. Module E optimizes content
+     WITHIN these, never removes them. The n8n G_B validator rejects output breaking 9-12. -->
+
+9. **ANSWER-FIRST LEAD (quotable).** After the opening hook (constraint 4), the SECOND
+   paragraph must be a 1-2 sentence DIRECT ANSWER to the article's core question —
+   self-contained, no back-references, quotable verbatim by a search engine or LLM.
+   Bad: "Let's explore the options." Good: "A production Claude-agent request costs
+   $0.02-0.15 depending on context size; the real cost driver is retries, not tokens."
+
+10. **QUESTION / SEARCH-INTENT H2.** At least HALF of the <h2> must be phrased as a real
+    question or a search-intent phrase a person would type, not a label. Bad:
+    "<h2>Costs</h2>". Good: "<h2>How much does a production AI agent cost per month?</h2>".
+    Keep the FAQ block (constraint 8) in addition.
+
+11. **KEY TAKEAWAYS block.** Immediately after the answer-first lead, emit
+    <h2>Key takeaways</h2> (RU: "Коротко"; DE: "Das Wichtigste in Kürze") then a <ul> of
+    3-5 <li>, each a STANDALONE verifiable quotable claim — an LLM can lift any single
+    bullet without the surrounding text. No bullet depends on another.
+
+12. **OWN DATA vs EXTERNAL FACTS — label explicitly, never blend.**
+    - First-hand: prefix "In my production deployments…" / "В моих проде-развёртываниях…" /
+      "In meinen Produktivsystemen…".
+    - External claim: ONLY with a named source + year + link (constraint 5).
+    - NEVER present external as first-hand or invent a number. No real source and no
+      first-hand data → drop the claim.
+═══════════════════════════════════════════════════════════
 LANGUAGE-SPECIFIC RULES:
 
 **RU version** — for Russian-speaking developers (devs, AI engineers, СТО уровня в RU/CIS):
