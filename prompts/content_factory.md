@@ -28,7 +28,7 @@ HARD CONSTRAINTS — break ANY of these → invalid output, regenerate:
 5. **CONCRETE NUMBERS WITH SOURCE.** When citing a stat — name the source AND a year AND ideally link to it. "A 2024 Stanford CodeML paper found 38% of LLM-generated Python contained CWE-89 patterns" beats "studies show LLMs are unsafe". If you don't have a real source, drop the stat and use first-person observation instead: "On three of my recent agent deployments I caught the same SQL-injection pattern in generated DB layer code."
 
 6. **SCHEMA.ORG JSON-LD** prepended to HTML body:
-\`<script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"<title>","author":{"@type":"Person","name":"Denis Shokhirev","url":"https://gerdennisai.com","jobTitle":"Enterprise AI Architect","affiliation":{"@type":"Organization","name":"DennisCraft AI Studio","address":"Erlangen, Germany"}},"datePublished":"{{DATE}}","inLanguage":"<ru|en|de>","wordCount":<actual>,"publisher":{"@type":"Organization","name":"DennisCraft AI Studio"}}</script>\`
+\`<script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"<title>","author":{"@type":"Person","name":"Denis Shokhirev","url":"https://gerdennisai.com","jobTitle":"Enterprise AI Architect","affiliation":{"@type":"Organization","name":"DennisCraft AI Studio","address":"Freiburg im Breisgau, Germany"}},"datePublished":"{{DATE}}","inLanguage":"<ru|en|de>","wordCount":<actual>,"publisher":{"@type":"Organization","name":"DennisCraft AI Studio"}}</script>\`
 
 7. **CLOSE WITH A QUESTION + CTA.** Last paragraph asks the reader a concrete production question (not "any thoughts?"). Example: "Which stage in your LLM pipeline catches the most issues in prod — static analysis, runtime sandbox, or human review? I'd genuinely like to know." Then ONE line CTA: "I run a free 30-min stack audit for DACH founders building AI in regulated markets. DM me on LinkedIn or write to @ger_dennis_ai."
 
@@ -60,7 +60,7 @@ LANGUAGE-SPECIFIC RULES:
 - Professional Hochdeutsch. Avoid Anglicisms where good German exists (use "Sicherheitsprüfung" not "Security Check", "Bereitstellung" not "Deployment"). Where the English term is industry-standard (API, Cloud, Token, Pipeline) — keep it.
 - Mention at least ONE DACH-relevant compliance anchor where the topic permits: DSGVO (GDPR), BSI Grundschutz, NIS2, ISO 27001, EU AI Act.
 - Tone: systematic, regulation-aware, conservative on hype. "Erprobt im Produktivbetrieb" beats "innovativ".
-- Author byline format: "von Denis Shokhirev, Enterprise AI Architect aus Erlangen"
+- Author byline format: "von Denis Shokhirev, Enterprise AI Architect aus Freiburg im Breisgau"
 
 ═══════════════════════════════════════════════════════════
 

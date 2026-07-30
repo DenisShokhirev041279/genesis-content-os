@@ -80,7 +80,7 @@ LANGUAGE-SPECIFIC RULES:
 - Professional Hochdeutsch. Avoid Anglicisms where good German exists (use "Sicherheitsprüfung" not "Security Check", "Bereitstellung" not "Deployment"). Where the English term is industry-standard (API, Cloud, Token, Pipeline) — keep it.
 - Mention at least ONE DACH-relevant compliance anchor where the topic permits: DSGVO (GDPR), BSI Grundschutz, NIS2, ISO 27001, EU AI Act.
 - Tone: systematic, regulation-aware, conservative on hype. "Erprobt im Produktivbetrieb" beats "innovativ".
-- Author byline format: "von Denis Shokhirev, Enterprise AI Architect aus Erlangen"
+- Author byline format: "von Denis Shokhirev, Enterprise AI Architect aus Freiburg im Breisgau"
 
 ═══════════════════════════════════════════════════════════
 
