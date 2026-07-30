@@ -135,6 +135,13 @@ def is_actionable(suggestion: str) -> tuple[bool, str]:
     return False, "no_concrete_change"
 
 
+PROTECTED_PROMPTS = frozenset({"content_factory", "content_factory.md"})
+
+
+class ProtectedPromptError(ValueError):
+    """Raised when an insight targets a prompt Module E must never auto-rewrite."""
+
+
 def detect_prompt_file(suggestion: str, target_module: str | None = None) -> str:
     """Decide which prompts/<file>.md is targeted.
 
@@ -142,12 +149,21 @@ def detect_prompt_file(suggestion: str, target_module: str | None = None) -> str
       'topic_distiller' → topic_distiller.md (выбор тем / рост)
       'scenario_v2'/None → scenario_v2.md (визуальная структура Shorts)
     """
-    if target_module == "topic_distiller":
+    # PROTECTED: content_factory.md carries the GEO quotable output contract —
+    # Module E must NEVER auto-rewrite it. Normalize case/whitespace, then refuse.
+    tm = (target_module or "").strip().lower()
+    sug = (suggestion or "").lower()
+    if tm in PROTECTED_PROMPTS or "content_factory" in sug:
+        raise ProtectedPromptError(
+            "content_factory.md is a protected article contract, not auto-editable by Module E"
+        )
+    if tm == "topic_distiller":
         return "topic_distiller.md"
-    s = suggestion.lower()
-    if "scenario_v3" in s or "v3.md" in s:
+    if "scenario_v3" in sug or "v3.md" in sug:
         return "scenario_v3.md"
-    return "scenario_v2.md"
+    result = "scenario_v2.md"
+    assert result not in PROTECTED_PROMPTS  # tripwire
+    return result
 
 
 # ============== GPT rewrite ==============
@@ -495,7 +511,11 @@ def main():
     groups: dict[str, list[dict]] = {}
     for ins in actionable:
         pc = ins.get("proposed_change") or {}
-        prompt_file = detect_prompt_file(pc.get("suggestion", ""), pc.get("target_module"))
+        try:
+            prompt_file = detect_prompt_file(pc.get("suggestion", ""), pc.get("target_module"))
+        except ProtectedPromptError as e:
+            print(f"  [skip] protected target: {e}")
+            continue
         if not (REPO / PROMPTS_DIR_RELATIVE / prompt_file).exists():
             print(f"  [skip] {prompt_file} not in repo")
             continue
