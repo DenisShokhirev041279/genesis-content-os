@@ -5,7 +5,6 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![GitHub stars](https://img.shields.io/github/stars/DenisShokhirev041279/genesis-content-os?style=social)](https://github.com/DenisShokhirev041279/genesis-content-os/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/DenisShokhirev041279/genesis-content-os)](https://github.com/DenisShokhirev041279/genesis-content-os/commits)
-[![Patent](https://img.shields.io/badge/Patent-Rospatent_2025612789-orange)](#license)
 
 <p align="center">
   <img src="assets/genesis_demo.gif" alt="Genesis autonomous loop — scan → render → publish → metrics → insight → auto-PR" width="820">
@@ -143,7 +142,7 @@ All channels reference back to the topic. When metrics arrive, they're attribute
 
 ### 2. The Apache-2.0 patent grant
 
-This project builds on workflow patterns covered by **Rospatent software patent #2025612789** (NextGen Pathways, by Denis Shokhirev). Apache-2.0 explicitly grants contributors and users a **patent license under that patent**.
+This project builds on workflow patterns covered by a **registered software patent** (NextGen Pathways). Apache-2.0 explicitly grants contributors and users a **patent license under that patent**.
 
 If you fork, build on, or commercialize Genesis OS — you have a written patent license for the underlying patterns. No surprise C&D letters. This is the entire point of choosing Apache-2.0 over MIT for patent-encumbered software.
 
@@ -236,7 +235,7 @@ gantt
 
 Apache License 2.0 — see [LICENSE](LICENSE).
 
-The Apache-2.0 patent grant matters here: Genesis builds on workflow patterns covered by **Rospatent software patent #2025612789** (NextGen Pathways). Apache-2.0 explicitly grants contributors and users a patent license under that patent, so the project stays freely usable.
+The Apache-2.0 patent grant matters here: Genesis builds on workflow patterns covered by a **registered software patent** (NextGen Pathways). Apache-2.0 explicitly grants contributors and users a patent license under that patent, so the project stays freely usable.
 
 ---
 
@@ -250,10 +249,9 @@ If you ship something interesting on top of Genesis OS — open a PR linking you
 
 ## Author
 
-**Denis Shokhirev** — Enterprise AI architect, founder of [DennisCraft AI Studio](https://gerdennisai.com) (Erlangen, Germany).
+**Denis Shokhirev** — Agentic AI Systems Architect, founder of [DennisCraft AI Studio](https://gerdennisai.com) (Freiburg im Breisgau, Germany).
 
 - Site: [gerdennisai.com](https://gerdennisai.com)
-- Patent: Rospatent software patent #2025612789 (NextGen Pathways)
 - LinkedIn: [linkedin.com/in/denis-shokhirev-38b866392](https://linkedin.com/in/denis-shokhirev-38b866392)
 - Telegram: [@ger_dennis_ai](https://t.me/ger_dennis_ai) (channel)
 
