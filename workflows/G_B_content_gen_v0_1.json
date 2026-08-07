@@ -523,7 +523,7 @@
           "parameters": [
             {
               "name": "X-Rebuild-Secret",
-              "value": "c4ceed2b64c7e673cc09c8037637b5dde2db6ed926db75b5"
+              "value": "{{$env.REBUILD_SECRET}}"
             },
             {
               "name": "Content-Type",

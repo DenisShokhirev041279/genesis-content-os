@@ -28,3 +28,9 @@ def test_wrap_youtube_with_video_id():
     out = wrap_youtube("https://gerdennisai.com/genesis", "shorts-pilot", "abc123")
     assert "utm_source=youtube" in out
     assert "utm_content=vid-abc123" in out
+
+
+def test_live_dashboard_domain_wrapped():
+    # live.gerdennisai.com — главный URL LinkedIn selfpromo; до 2026-08-07 wrap() молча его пропускал
+    out = wrap("https://live.gerdennisai.com", source="linkedin", campaign="selfpromo")
+    assert "utm_source=linkedin" in out and "utm_campaign=selfpromo" in out

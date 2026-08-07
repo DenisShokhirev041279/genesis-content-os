@@ -29,7 +29,7 @@ from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
 
 
 VALID_SOURCES = {"telegram", "youtube", "linkedin", "instagram", "twitter", "email"}
-OWN_DOMAINS = {"gerdennisai.com", "www.gerdennisai.com", "cms.gerdennisai.com"}
+OWN_DOMAINS = {"gerdennisai.com", "www.gerdennisai.com", "cms.gerdennisai.com", "live.gerdennisai.com"}
 
 
 def wrap(
