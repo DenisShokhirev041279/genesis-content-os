@@ -182,6 +182,109 @@ def last_n_days(n: int) -> tuple[date, date, str]:
 
 # ============== Data fetchers ==============
 
+def sb_rpc(fn: str, body: dict) -> list[dict]:
+    """Вызов SQL-функции. Агрегация в БД: GSC даёт ~200 строк в день, тянуть их сюда незачем."""
+    url = f"{SUPABASE_URL}/rest/v1/rpc/{fn}"
+    req = urllib.request.Request(
+        url, method="POST", data=json.dumps(body).encode(),
+        headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}",
+                 "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            out = json.loads(r.read().decode())
+            return out if isinstance(out, list) else []
+    except Exception as e:                                   # noqa: BLE001
+        print(f"[warn] rpc {fn}: {e}", file=sys.stderr)
+        return []
+
+
+def fetch_platform_snapshot() -> dict:
+    """Последние значения по платформам из metrics_snapshots.
+
+    Таблица kpi_daily пуста (проверено 30.08.2026: 0 строк), поэтому блок «Метрики» в отчёте
+    много недель показывал одни прочерки. Берём то же, что показывает дашборд.
+    """
+    rows = sb_get("metrics_snapshots", {
+        "select": "platform,metric_name,metric_value,captured_at",
+        "order": "captured_at.desc",
+        "limit": "4000",
+    })
+    latest: dict[str, float] = {}
+    for r in rows or []:
+        key = f"{r.get('platform')}/{r.get('metric_name')}"
+        if key not in latest:
+            try:
+                latest[key] = float(r.get("metric_value") or 0)
+            except (TypeError, ValueError):
+                continue
+    pick = {
+        "telegram_subscribers": latest.get("telegram/channel_subscribers"),
+        "telegram_posts_total": latest.get("telegram/channel_posts_total"),
+        "youtube_engagement_rate": latest.get("youtube/engagement_rate"),
+        "youtube_avg_view_percentage": latest.get("youtube/avg_view_percentage"),
+        "instagram_followers": latest.get("instagram/followers_count"),
+        "facebook_followers": latest.get("facebook/followers_count"),
+        "ghost_posts_total": latest.get("ghost/posts_total"),
+        "site_visitors_7d": latest.get("plausible/site_visitors_7d"),
+        "site_pageviews_7d": latest.get("plausible/site_pageviews_7d"),
+    }
+    return {k: v for k, v in pick.items() if v is not None}
+
+
+def fetch_demand(days: int) -> dict:
+    """Спрос и лиды — то, ради чего отчёт вообще читают.
+
+    Что искали в Google (GSC), из каких стран нас видят, сколько пришло обращений
+    и о чём спрашивали в чате. Пустые блоки не скрываем: «ноль» — это тоже ответ.
+    """
+    queries = sb_rpc("demand_top_queries", {"days": days, "only_country": None, "lim": 15})
+    de_queries = sb_rpc("demand_top_queries", {"days": days, "only_country": "deu", "lim": 10})
+    countries = sb_rpc("demand_by_country", {"days": days, "lim": 8})
+    leads = sb_rpc("leads_summary", {"days": days})   # тестовые записи отсеиваются в самой функции
+    topics = sb_rpc("chat_topics", {"days": days, "lim": 10})
+
+    def num(v) -> float:
+        try:
+            return float(v or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    return {
+        "search": {
+            "impressions": round(sum(num(q.get("impressions")) for q in queries)),
+            "clicks": round(sum(num(q.get("clicks")) for q in queries)),
+            "top_queries": [
+                {"q": q.get("query"), "imp": round(num(q.get("impressions"))),
+                 "clicks": round(num(q.get("clicks"))), "pos": num(q.get("avg_position"))}
+                for q in queries[:12]
+            ],
+            "top_queries_germany": [
+                {"q": q.get("query"), "imp": round(num(q.get("impressions")))}
+                for q in de_queries[:8]
+            ],
+            "countries": [
+                {"country": c.get("country"), "imp": round(num(c.get("impressions"))),
+                 "clicks": round(num(c.get("clicks")))}
+                for c in countries
+            ],
+        },
+        "leads": {
+            "total": sum(int(num(l.get("total"))) for l in leads),
+            "hot": sum(int(num(l.get("hot"))) for l in leads),
+            "with_contact": sum(int(num(l.get("with_contact"))) for l in leads),
+            "by_source": [
+                {"source": l.get("source"), "total": int(num(l.get("total"))),
+                 "hot": int(num(l.get("hot")))}
+                for l in leads
+            ],
+        },
+        "chat_topics": [
+            {"topic": t.get("topic"), "sessions": int(num(t.get("sessions")))}
+            for t in topics
+        ],
+    }
+
+
 def fetch_kpi_window(start: date, end: date) -> list[dict]:
     """SELECT kpi_daily WHERE day in [start, end)."""
     return sb_get("kpi_daily", {
@@ -343,6 +446,13 @@ SYSTEM_PROMPT = """Ты — Денис Шохирев, Enterprise AI архит�
 - Blog: {X} visits ({±Y}%)
 - YT: +{X} subs
 
+Спрос и лиды:
+- Поиск: {X} показов, {Y} кликов; чаще всего ищут «{top_query}»
+- Германия: {список 2-3 запросов или «—»}
+- Обращения: {N} ({M} горячих, {K} с контактом) — {откуда}
+- В чате спрашивали про: {2-3 темы или «—»}
+- Тема недели: {запрос с показами, под который у нас нет страницы, либо «—»}
+
 Топ-3 контента:
 1. {title} — {platform}, score {S}, {key_metric_breakdown}
 2. ...
@@ -361,7 +471,15 @@ SYSTEM_PROMPT = """Ты — Денис Шохирев, Enterprise AI архит�
 ```
 
 Правила:
-- Если данных по метрике 0 — пиши «—» вместо числа, не выдумывай.
+- Числа для «Опубликовано» бери из payload.published (posts_total, videos).
+- Блок «Метрики»: kpi_daily сейчас пуст, поэтому бери значения из payload.platform_metrics
+  (подписчики TG, вовлечённость YT, посетители сайта). Не пиши «—», если значение там есть.
+- Если данных действительно нет — пиши «—» вместо числа, не выдумывай.
+- Блок «Спрос и лиды» — главный, он идёт первым после метрик. Данные в payload.demand.
+- «Обращения: 0» — нормальный и важный ответ, писать его прямо, а не пропускать блок.
+- «Тема недели»: возьми запрос из demand.search.top_queries с заметными показами, по которому
+  у нас нет отдельной страницы (брендовые «dennis ai» и названия наших статей не в счёт) —
+  это подсказка, о чём писать. Если такого нет, пиши «—».
 - %-change пиши только если есть данные за прошлую неделю.
 - «Что изменилось» — только реальные insights status='applied' или 'proposed' из payload.
 - «Предложения» — берёшь suggestion из proposed_change.suggestion в insights.
@@ -375,7 +493,9 @@ def build_user_payload(week_iso: str, period_start: date, period_end: date,
                        kpi_curr: dict, kpi_prev: dict,
                        top_posts: list[dict], flop_posts: list[dict],
                        insights: list[dict], topics_counts: dict,
-                       queued_topics: list[dict]) -> dict:
+                       queued_topics: list[dict], demand: dict | None = None,
+                       platform_metrics: dict | None = None,
+                       counts: dict | None = None) -> dict:
     def slim_post(p: dict) -> dict:
         return {
             "id": p["id"][:8],
@@ -429,6 +549,9 @@ def build_user_payload(week_iso: str, period_start: date, period_end: date,
              "hype": t.get("hype_score")}
             for t in queued_topics
         ],
+        "demand": demand or {},
+        "platform_metrics": platform_metrics or {},
+        "published": counts or {},
     }
 
 
@@ -444,8 +567,14 @@ def call_openai(system: str, user_json: dict) -> str:
             )},
         ],
         "temperature": 0.3,
-        "max_tokens": 1500,
     }
+    # Модели поколения gpt-5 не принимают max_tokens и фиксируют temperature —
+    # старые (gpt-4.1) не понимают max_completion_tokens. Поддерживаем оба.
+    if OPENAI_MODEL.startswith(("gpt-5", "o1", "o3", "o4")):
+        body["max_completion_tokens"] = 1500
+        body.pop("temperature", None)
+    else:
+        body["max_tokens"] = 1500
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         "https://api.openai.com/v1/chat/completions",
@@ -512,6 +641,8 @@ def main() -> int:
         insights = fetch_insights_window(period_start, period_end)
         topics_counts = fetch_topics_counts()
         queued = fetch_queued_topics(limit=10)
+        demand = fetch_demand(window_days)
+        platform_metrics = fetch_platform_snapshot()
     except urllib.error.URLError as e:
         msg = f"Module F: Supabase недоступен — {e}"
         print(msg, file=sys.stderr)
@@ -546,7 +677,9 @@ def main() -> int:
     payload = build_user_payload(
         week_label, period_start, period_end,
         kpi_curr, kpi_prev,
-        top, flop, insights, topics_counts, queued,
+        top, flop, insights, topics_counts, queued, demand,
+        platform_metrics,
+        {"posts_total": len(posts), "videos": n_videos, "text_posts": n_posts_non_video},
     )
 
     if args.dry_run:
