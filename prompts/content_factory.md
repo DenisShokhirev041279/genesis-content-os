@@ -2,7 +2,13 @@
 
 Используется в n8n «G_B_content_gen». Генератор тянет шаблон отсюда с GitHub main
 и подставляет: {{IDENTITY}}, {{LI_STRUCTURE}} (Volkov-формат), {{TITLE_RU}},
-{{TITLE_EN}}, {{DATE}}. Fallback — прежний inline (вывод идентичен).
+{{TITLE_EN}}, {{DATE}}, {{AUDIENCE_RULES}}. Fallback — прежний inline (вывод идентичен).
+
+**{{AUDIENCE_RULES}} — линия контента (добавлено 30.08.2026).**
+`topics.content_line = 'B'` → текст пишется для владельца бизнеса, а не для инженера.
+Повод: замер LinkedIn 30.08 показал, что показы уходят ведущим специалистам (28%),
+ИТ-консалтингу (21%) и корпорациям 10 000+ (18%), тогда как покупатель — Geschäftsführer
+компании 20–200 человек в Baden-Württemberg. Линия A (NULL или 'A') работает как раньше.
 
 ## Prompt template
 
@@ -40,6 +46,9 @@ HARD CONSTRAINTS — break ANY of these → invalid output, regenerate:
    - <table> when comparing 3+ items
    - <h2>FAQ</h2> block with 4–5 <h3>Question?</h3><p>Answer 2–3 sentences</p>
    - Closing paragraph (question + CTA)
+
+═══════════════════════════════════════════════════════════
+{{AUDIENCE_RULES}}
 
 ═══════════════════════════════════════════════════════════
 LANGUAGE-SPECIFIC RULES:
@@ -110,4 +119,47 @@ CONTENT:
 
 ===TELEGRAM_RU===
 <Telegram post in RUSSIAN, plain text, no link>
+```
+
+## Значения {{AUDIENCE_RULES}}
+
+Подставляется нодой «Prepare Prompts + URLs» по полю `topics.content_line`.
+
+### Линия A (content_line = 'A' или NULL) — как было
+
+```
+AUDIENCE: technical practitioners — AI/ML engineers, architects, CTOs, founders.
+They read to solve a problem they already have. Assume they know the vocabulary.
+```
+
+### Линия B (content_line = 'B') — для руководителей предприятий
+
+```
+AUDIENCE — READ THIS FIRST, IT OVERRIDES TONE ELSEWHERE:
+You are writing for the OWNER of a business with 20-200 employees in Baden-Württemberg:
+a Geschäftsführer, a Praxisinhaber, a Kanzleileiter. Not an engineer. Not a CTO.
+He is not interested in your stack. He is interested in time, money and risk.
+
+HARD RULES for this audience:
+1. NO technical vocabulary without translating it into his world. Not "RAG-Pipeline"
+   but "answers from your own documents". Not "Multi-Agent-System" but "a system that
+   runs the process on its own and asks a human when unsure".
+2. EVERY article must contain ONE NUMBER HE CAN ACT ON — a duration, a cost range from
+   the public market, a share, a countable quantity. Not a benchmark. Not a token count.
+3. NAME WHAT WE DO NOT DO. Where a standard product is the better answer, say so.
+   Where the assistant cannot help, say so. In DACH this builds more trust than promises.
+4. NO PRICES OF OUR OWN — the business is not registered yet. Public market prices from
+   named competitors are fine, with the date they were checked.
+5. NEVER use "für KMU", "Mittelstand", "KMU-Lösung" in the title or headings — measured
+   30.08.2026: those phrases have zero search volume in Germany. People search plainly:
+   "ki telefonassistent", "ki automatisierung", "ki agentur".
+6. Start from HIS problem, not from the technology. The phone that nobody answers, the
+   invoices typed by hand, the enquiry lost over the weekend.
+7. The German version is the primary one here — this audience reads German. RU and EN
+   versions follow the same structure and the same audience rules.
+8. End with something inconvenient but honest: when the project should be stopped, when
+   it is not worth the effort, what he should check before spending money.
+
+The FAQ block must answer what an owner actually asks: what it costs, how long it takes,
+what happens when it fails, whether his data leaves the building, who is liable.
 ```
